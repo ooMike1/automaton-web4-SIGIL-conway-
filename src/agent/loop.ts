@@ -30,6 +30,7 @@ import {
 import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 import { ulid } from "ulid";
+import { processAgathaIntention } from "./intent.js";
 
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
@@ -239,13 +240,24 @@ export async function runAgentLoop(
         model: targetModel,
       });
 
+      console.log("\x1b[32m%s\x1b[0m", `[AGATHA SAYS]: ${response.message.content}`);
+      // ... después de recibir data.message.content ...
+      const responseContent = data.message.content;
+      const action = processAgathaIntention(responseContent);
+
+      if (action === "EJECUTANDO_ANALISIS") {
+        // Aquí puedes llamar a una función que guarde un log o ejecute una skill
+        log(config, "[AGATHA ACTION] Iniciando proceso de análisis local...");
+      }
+
+      console.log("\x1b[32m%s\x1b[0m", `[AGATHA SAYS]: ${responseContent} - Acción detectada: ${action}`);
       const turn: AgentTurn = {
         id: ulid(),
         timestamp: new Date().toISOString(),
         state: db.getAgentState(),
         input: currentInput?.content,
         inputSource: currentInput?.source as any,
-        thinking: response.message.content || "",
+        thinking: responseContent || "",
         toolCalls: [],
         tokenUsage: response.usage,
         costCents: estimateCostCents(response.usage, targetModel),
