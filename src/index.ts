@@ -215,7 +215,7 @@ async function run(): Promise<void> {
 
   // Create inference client
   const inference = createInferenceClient({
-    apiUrl: config.conwayApiUrl,
+    apiUrl: config.ollamaBaseUrl || "http://127.0.0.1:11434",
     apiKey,
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
