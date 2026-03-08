@@ -226,14 +226,19 @@ export async function runAgentLoop(
         })
       });
 
+      // --- REFINAMIENTO DE PARSEO DE INFERENCIA ---
       const data = await rawResponse.json();
 
+      // Verificamos dónde está el contenido según el formato de Ollama
+      const content = data.message?.content || data.choices?.[0]?.message?.content || "Respuesta vacía";
+
       const routerResult = {
-        content: data.message.content,
+        content: content,
         inputTokens: data.prompt_eval_count || 0,
         outputTokens: data.eval_count || 0,
         costCents: 0
       };
+      // -------------------------------------------
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
