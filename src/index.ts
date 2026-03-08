@@ -31,6 +31,13 @@ async function main(): Promise<void> {
 
   // ─── CLI Commands ────────────────────────────────────────────
 
+  // Interceptor de Debug Global
+  const originalFetch = global.fetch;
+  global.fetch = async (url: any, options: any) => {
+    console.log(`[DEBUG_FETCH] Requesting: ${url.toString()}`);
+    return originalFetch(url, options);
+  };
+
   if (args.includes("--version") || args.includes("-v")) {
     console.log(`Conway Automaton v${VERSION}`);
     process.exit(0);
