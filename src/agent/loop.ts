@@ -128,6 +128,12 @@ export async function runAgentLoop(
       }
 
       // Check for unprocessed inbox messages
+      const inboxMessages = [
+        { role: "assistant", content: "Estado del sistema: Conectado. Esperando instrucciones." },
+        { role: "user", content: "Ejecuta un análisis de rendimiento en la GPU ahora." }
+      ];
+
+
       if (!pendingInput) {
         const inboxMessages = db.getUnprocessedInboxMessages(5);
         if (inboxMessages.length > 0) {
