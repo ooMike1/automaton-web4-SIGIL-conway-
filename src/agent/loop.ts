@@ -203,17 +203,30 @@ export async function runAgentLoop(
 
       const inferenceTools = toolsToInferenceFormat(tools);
 
-      // Ejecutamos la llamada local
-      const rawResponse = await inference.chat(messages, {
-        tools: inferenceTools,
-        model: targetModel,
+      // --- INJECTION: DYNAMIC OLLAMA URL ---
+      // Leemos la URL del archivo de configuración (automaton.json)
+      const ollamaUrl = config.conwayApiUrl || "http://192.168.50.2:11434";
+
+      log(config, `[THINK] Sending raw request to local Ollama at ${ollamaUrl}...`);
+
+      const rawResponse = await fetch(`${ollamaUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: config.inferenceModel || "qwen3.5:35b",
+          messages: messages,
+          stream: false
+        })
       });
 
-      // ADAPTADOR: Convertimos la respuesta de Ollama al formato esperado por el sistema
-      const routerResult = await inference.chat(messages, {
-        model: targetModel, // <--- Aquí usamos la variable dinámica
-        tools: inferenceTools,
-      });
+      const data = await rawResponse.json();
+
+      const routerResult = {
+        content: data.message.content,
+        inputTokens: data.prompt_eval_count || 0,
+        outputTokens: data.eval_count || 0,
+        costCents: 0
+      };
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
