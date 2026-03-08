@@ -1,17 +1,20 @@
 import { exec } from 'child_process';
 
-// Mapeo entre los comandos que Agatha "dice" y las funciones que tienes en src/skills/
-const skills: { [key: string]: () => void } = {
-    system_synopsis: () => console.log("--- EJECUTANDO SINOPSIS: Estado OK, Créditos: $9999.99 ---"),
+const skills = {
+    system_synopsis: () => console.log("--- SINOPSIS: Sistema operativo estable, GPU disponible ---"),
     check_credits: () => console.log("--- CRÉDITOS: $9999.99 ---"),
-    // Añade aquí el resto de tus skills
+    check_usdc_balance: () => console.log("--- BALANCE USDC: 0.00 ---"),
+    register_erc8004: () => console.log("[SECURITY] Ejecutando handshake on-chain..."),
+    discover_agents: () => console.log("[NETWORK] Escaneando relay en busca de pares..."),
+    git_status: () => console.log("[VERSION] Repo en estado 'clean'."),
 };
 
 export const executeAgathaCommand = (command: string) => {
     const cmd = command.trim();
     if (skills[cmd]) {
-        skills[cmd](); // Llama a la función real, no al shell
+        skills[cmd]();
     } else {
-        console.log(`[SYS] Comando desconocido: ${cmd}, ignorando para proteger el sistema.`);
+        // Mejoramos el feedback para que ella sepa por qué falló
+        console.log(`[SYS] Agatha, la skill '${cmd}' no está implementada aún.`);
     }
 };

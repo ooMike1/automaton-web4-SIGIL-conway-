@@ -230,9 +230,19 @@ export async function runAgentLoop(
       /// --- PARSER SOSTENIBLE Y ROBUSTO ---
       const data = await rawResponse.json();
 
+      // Normalización de respuesta (Shim de compatibilidad)
+      const normalizedResponse = {
+        choices: [{
+          message: {
+            content: data.message?.content || data.content || ""
+          }
+        }]
+      };
+      // Ahora usa normalizedResponse.choices[0].message.content
+
       // Extraemos el contenido. Priorizamos el formato nativo de Ollama, 
       // pero aceptamos el formato OpenAI si el primero falla.
-      const content = data.message?.content || data.choices?.[0]?.message?.content || "";
+      const content = normalizedResponse.choices[0].message.content || data.choices?.[0]?.message?.content || "";
 
       // Verificamos que realmente tengamos contenido antes de proceder
       if (!content) {
