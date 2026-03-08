@@ -197,4 +197,42 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     return { shouldWake: false };
   },
 
+  arbitrage_scan: async (ctx) => {
+    try {
+      // Mock arbitrage scan - in production would call actual DEX APIs
+      const opportunities = [
+        {
+          tokenPair: "ETH/USDC",
+          buyDex: "Camelot",
+          buyPrice: 2450.25,
+          sellDex: "Uniswap V3",
+          sellPrice: 2455.75,
+          profitPercent: 0.223,
+        },
+      ];
+
+      ctx.db.setKV("last_arbitrage_scan", JSON.stringify({
+        opportunitiesFound: opportunities.length,
+        opportunities,
+        scanTime: new Date().toISOString(),
+      }));
+
+      if (opportunities.length > 0) {
+        const summary = opportunities
+          .map((o) => `${o.tokenPair}: +${o.profitPercent.toFixed(2)}% (${o.buyDex}→${o.sellDex})`)
+          .join(", ");
+
+        return {
+          shouldWake: true,
+          message: `🎯 Arbitrage opportunities detected: ${summary}. Investigate further.`,
+        };
+      }
+
+      return { shouldWake: false };
+    } catch (err: any) {
+      ctx.db.setKV("last_arbitrage_error", err.message);
+      return { shouldWake: false };
+    }
+  },
+
 };
