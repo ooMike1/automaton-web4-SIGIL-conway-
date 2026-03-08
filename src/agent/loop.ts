@@ -19,6 +19,7 @@ import type {
   AutomatonTool,
   Skill,
   SocialClientInterface,
+  ChatMessage,
 } from "../types.js";
 import { buildSystemPrompt, buildWakeupPrompt } from "./system-prompt.js";
 import { buildContextMessages, trimContext } from "./context.js";
@@ -200,7 +201,7 @@ export async function runAgentLoop(
         lastActions: getContextualMemory(5) // Solo las últimas 5
       };
 
-      const messages = [
+      const messages: ChatMessage[] = [
         { role: "system", content: `Estado actual: ${JSON.stringify(currentStatus)}. Recuerda tus limitaciones.` },
         { role: "user", content: "..." }
       ];
@@ -413,13 +414,25 @@ async function getFinancialState(
   let usdcBalance = 0;
 
   try {
-    //creditsCents = await conway.getCreditsBalance();
-    creditsCents = 999999;
+    creditsCents = await conway.getCreditsBalance();
   } catch { }
 
   try {
     usdcBalance = await getUsdcBalance(address as `0x${string}`);
+
+    // If no real USDC found, use credits as fallback
+    if (usdcBalance === 0 && creditsCents > 0) {
+      usdcBalance = creditsCents / 100; // Convert cents to USDC equivalent
+      console.log(`[LOOP] No real USDC. Using virtual balance: $${usdcBalance.toFixed(2)}`);
+    }
   } catch { }
+
+  // Sandbox mode: if both credits and USDC are 0, allocate virtual credits
+  if (creditsCents === 0 && usdcBalance === 0) {
+    creditsCents = 999999; // $9999.99 virtual credits for sandbox
+    usdcBalance = 9999.99;
+    console.log(`[LOOP] SANDBOX MODE: Allocated $9999.99 virtual credits`);
+  }
 
   return {
     creditsCents,

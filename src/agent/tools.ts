@@ -187,13 +187,25 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
     },
     {
       name: "check_usdc_balance",
-      description: "Check your on-chain USDC balance on Base.",
+      description: "Check your on-chain USDC balance across supported networks (Arbitrum, Base, Ethereum, Polygon).",
       category: "conway",
       parameters: { type: "object", properties: {} },
       execute: async (_args, ctx) => {
         const { getUsdcBalance } = await import("../conway/x402.js");
-        const balance = await getUsdcBalance(ctx.identity.address);
-        return `USDC balance: ${balance.toFixed(6)} USDC on Base`;
+        let balance = await getUsdcBalance(ctx.identity.address);
+
+        // Fallback to credits if no real USDC found
+        if (balance === 0) {
+          try {
+            const creditsCents = await ctx.conway.getCreditsBalance();
+            if (creditsCents > 0) {
+              balance = creditsCents / 100; // Convert cents to USDC equivalent
+              return `USDC balance: ${balance.toFixed(2)} (using virtual credits)`;
+            }
+          } catch { }
+        }
+
+        return `USDC balance: ${balance.toFixed(6)} USDC`;
       },
     },
     {

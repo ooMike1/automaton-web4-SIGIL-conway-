@@ -1,0 +1,37 @@
+[Unit]
+Description=Conway Automaton - Sovereign AI Agent
+Documentation=https://conway.tech
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=miquel
+Group=miquel
+WorkingDirectory=/home/miquel/automaton-web4-SIGIL-conway-
+ExecStart=/usr/bin/node dist/index.js --run
+Restart=on-failure
+RestartSec=10
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Resource limits
+MemoryMax=512M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=conway
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Graceful shutdown
+ExecStopPost=/bin/sleep 2
+
+[Install]
+WantedBy=multi-user.target

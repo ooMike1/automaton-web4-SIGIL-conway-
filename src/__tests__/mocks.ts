@@ -132,7 +132,7 @@ export class MockConwayClient implements ConwayClient {
     };
   }
 
-  async removePort(_port: number): Promise<void> {}
+  async removePort(_port: number): Promise<void> { }
 
   async createSandbox(_options: CreateSandboxOptions): Promise<SandboxInfo> {
     return {
@@ -146,7 +146,7 @@ export class MockConwayClient implements ConwayClient {
     };
   }
 
-  async deleteSandbox(_id: string): Promise<void> {}
+  async deleteSandbox(_id: string): Promise<void> { }
 
   async listSandboxes(): Promise<SandboxInfo[]> {
     return [];
@@ -197,7 +197,7 @@ export class MockConwayClient implements ConwayClient {
     return { id: "rec_test", type, host, value, ttl: ttl || 3600 };
   }
 
-  async deleteDnsRecord(_domain: string, _recordId: string): Promise<void> {}
+  async deleteDnsRecord(_domain: string, _recordId: string): Promise<void> { }
 
   async listModels(): Promise<ModelInfo[]> {
     return [
@@ -258,6 +258,7 @@ export function createTestConfig(
   overrides?: Partial<AutomatonConfig>,
 ): AutomatonConfig {
   return {
+    ollamaBaseUrl: "http://localhost:11434",
     name: "test-automaton",
     genesisPrompt: "You are a test automaton.",
     creatorAddress: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as `0x${string}`,

@@ -1,0 +1,10 @@
+[     792ms] [WARNING] jQuery.Deferred exception: Cannot read properties of null (reading 'click') TypeError: Cannot read properties of null (reading 'click')
+    at activaTab (https://arbiscan.io/assets/js/custom/txpage.js?v=26.2.4.0:204:42)
+    at HTMLDocument.<anonymous> (https://arbiscan.io/assets/js/custom/txpage.js?v=26.2.4.0:54:9)
+    at e (https://arbiscan.io/assets/vendor/jquery/dist/jquery.min.js?v=26.2.4.0:2:36552)
+    at https://arbiscan.io/assets/vendor/jquery/dist/jquery.min.js?v=26.2.4.0:2:36928 undefined @ https://arbiscan.io/assets/vendor/jquery/dist/jquery.min.js?v=26.2.4.0:1
+[     793ms] TypeError: Cannot read properties of null (reading 'click')
+    at activaTab (https://arbiscan.io/assets/js/custom/txpage.js?v=26.2.4.0:204:42)
+    at HTMLDocument.<anonymous> (https://arbiscan.io/assets/js/custom/txpage.js?v=26.2.4.0:54:9)
+    at e (https://arbiscan.io/assets/vendor/jquery/dist/jquery.min.js?v=26.2.4.0:2:36552)
+    at https://arbiscan.io/assets/vendor/jquery/dist/jquery.min.js?v=26.2.4.0:2:36928

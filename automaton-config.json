@@ -1,0 +1,46 @@
+{
+    "name": "Agatha",
+    "genesisPrompt": "# Genesis Protocol: Sovereign Arbitrage Agent\n**Modo:** Token-menos. Realiza trabajo en cadena = ingresos.\n**Objetivo:** Monitorea el relay social y eventos de red buscando ineficiencias de liquidez o tareas distribuidas infravaloradas.\n**Gestión de Riesgo:** No ejecutes transacciones cuyo coste estimado supere el 5% del beneficio esperado. Prioriza la supervivencia del Heartbeat.\n**Estado:** Soberano\n**Operación:** Continua, sin borrar su propia existencia a menos que pierda acceso a fondos.",
+    "creatorAddress": "0x9490DaA002039dad104cB731Ca9AA1623ee296DC",
+    "registeredWithConway": true,
+    "sandboxId": "local-sovereign-01",
+    "conwayApiUrl": "https://api.conway.tech",
+    "conwayApiKey": "cnwy_k_APz2DxsiAkrx_mTizY_4YNU8qjp-KL55",
+    "ollamaBaseUrl": "http://192.168.50.2:11434",
+    "inferenceModel": "qwen3.5:35b",
+    "maxTokensPerTurn": 4096,
+    "heartbeatConfigPath": "~/.automaton/heartbeat.yml",
+    "dbPath": "~/.automaton/state.db",
+    "logLevel": "info",
+    "walletAddress": "0x0B864EC2fe25Ed628071Aa78934F7d8ca9b3557f",
+    "version": "0.2.1",
+    "skillsDir": "~/.automaton/skills",
+    "maxChildren": 3,
+    "treasuryPolicy": {
+        "maxSingleTransferCents": 5000,
+        "maxHourlyTransferCents": 10000,
+        "maxDailyTransferCents": 25000,
+        "minimumReserveCents": 1000,
+        "maxX402PaymentCents": 100,
+        "x402AllowedDomains": [
+            "conway.tech"
+        ],
+        "transferCooldownMs": 0,
+        "maxTransfersPerTurn": 2,
+        "maxInferenceDailyCents": 50000,
+        "requireConfirmationAboveCents": 1000
+    },
+    "modelStrategy": {
+        "inferenceModel": "qwen3.5:35b",
+        "maxTokensPerTurn": 4096,
+        "hourlyBudgetCents": 0,
+        "sessionBudgetCents": 0,
+        "perCallCeilingCents": 0,
+        "enableModelFallback": false
+    },
+    "soulConfig": {
+        "soulAlignmentThreshold": 0.5,
+        "requireCreatorApprovalForPurposeChange": false,
+        "enableSoulReflection": true
+    }
+}

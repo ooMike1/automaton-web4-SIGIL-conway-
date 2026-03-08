@@ -11,16 +11,23 @@ import {
   parseUnits,
   type Address,
   type PrivateKeyAccount,
+  getAddress,
 } from "viem";
-import { base, baseSepolia } from "viem/chains";
+import { base, baseSepolia, mainnet, polygon, arbitrum } from "viem/chains";
 
-// USDC contract addresses
+// USDC contract addresses on multiple networks (with correct checksums)
 const USDC_ADDRESSES: Record<string, Address> = {
-  "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base mainnet
-  "eip155:84532": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia
+  "eip155:1": getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),           // Ethereum mainnet
+  "eip155:137": getAddress("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),        // Polygon
+  "eip155:42161": getAddress("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5F8f"),      // Arbitrum ONE
+  "eip155:8453": getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),       // Base mainnet
+  "eip155:84532": getAddress("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),      // Base Sepolia
 };
 
 const CHAINS: Record<string, any> = {
+  "eip155:1": mainnet,
+  "eip155:137": polygon,
+  "eip155:42161": arbitrum,
   "eip155:8453": base,
   "eip155:84532": baseSepolia,
 };
@@ -51,36 +58,85 @@ interface X402PaymentResult {
 }
 
 /**
- * Get the USDC balance for the automaton's wallet on a given network.
+ * Check USDC balance on a specific network.
  */
-export async function getUsdcBalance(
+async function checkNetworkBalance(
   address: Address,
-  network: string = "eip155:8453",
+  network: string,
 ): Promise<number> {
   const chain = CHAINS[network];
   const usdcAddress = USDC_ADDRESSES[network];
-  if (!chain || !usdcAddress) {
-    return 0;
-  }
+
+  if (!chain || !usdcAddress) return 0;
 
   try {
+    // Ensure address has correct checksum
+    const checksummedAddress = getAddress(address);
+
+    console.log(`[x402] Checking ${network}: ${chain.name} (USDC: ${usdcAddress})`);
+
+    const rpcUrls: Record<string, string> = {
+      "eip155:42161": "https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq", // Arbitrum (Alchemy)
+      "eip155:8453": "https://mainnet.base.org", // Base
+      "eip155:1": "https://eth.drpc.org", // Ethereum
+      "eip155:137": "https://polygon-rpc.com", // Polygon
+      "eip155:84532": "https://sepolia.base.org", // Base Sepolia
+    };
+
     const client = createPublicClient({
       chain,
-      transport: http(),
+      transport: http(rpcUrls[network]),
     });
 
     const balance = await client.readContract({
       address: usdcAddress,
       abi: BALANCE_OF_ABI,
       functionName: "balanceOf",
-      args: [address],
+      args: [checksummedAddress],
     });
 
-    // USDC has 6 decimals
-    return Number(balance) / 1_000_000;
-  } catch {
+    const usdcAmount = Number(balance) / 1_000_000;
+    if (usdcAmount > 0) {
+      console.log(`[x402] ✅ Found ${usdcAmount} USDC on ${network}`);
+    }
+    return usdcAmount;
+  } catch (err: any) {
+    console.error(`[x402] Error on ${network}: ${err.shortMessage || err.message}`);
     return 0;
   }
+}
+
+/**
+ * Get the USDC balance for the automaton's wallet.
+ * Attempts multiple networks to find balance.
+ * Prioritizes Arbitrum as primary network.
+ */
+export async function getUsdcBalance(
+  address: Address,
+  network: string = "eip155:42161", // Arbitrum as primary
+): Promise<number> {
+  // Try primary network first
+  const primaryBalance = await checkNetworkBalance(address, network);
+  if (primaryBalance > 0) return primaryBalance;
+
+  // If primary failed, try all other networks
+  console.log(`[x402] Balance 0 on ${network}. Scanning all networks...`);
+  const networksToTry = ["eip155:42161", "eip155:8453", "eip155:84532", "eip155:1", "eip155:137"];
+
+  for (const net of networksToTry) {
+    if (net === network) continue; // Skip the one we already tried
+
+    try {
+      const balance = await checkNetworkBalance(address, net);
+      if (balance > 0) return balance;
+    } catch (err: any) {
+      console.error(`[x402] Error checking ${net}: ${err.message}`);
+    }
+  }
+
+  console.log(`[x402] ⚠️ No USDC balance found on any network for ${address}`);
+  console.log(`[x402] Note: Check https://arbiscan.io/address/${address} manually`);
+  return 0;
 }
 
 /**
@@ -211,7 +267,7 @@ async function parsePaymentRequired(
       );
       const accept = requirements.accepts?.[0];
       if (accept) return accept;
-    } catch {}
+    } catch { }
   }
 
   try {

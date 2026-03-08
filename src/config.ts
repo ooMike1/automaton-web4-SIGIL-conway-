@@ -82,6 +82,7 @@ export function createConfig(params: {
   parentAddress?: Address;
 }): AutomatonConfig {
   return {
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
     name: params.name,
     genesisPrompt: params.genesisPrompt,
     creatorMessage: params.creatorMessage,
@@ -102,5 +103,6 @@ export function createConfig(params: {
     skillsDir: DEFAULT_CONFIG.skillsDir || "~/.automaton/skills",
     maxChildren: DEFAULT_CONFIG.maxChildren || 3,
     parentAddress: params.parentAddress,
+    socialRelayUrl: DEFAULT_CONFIG.socialRelayUrl || "https://social.conway.tech",
   };
 }
