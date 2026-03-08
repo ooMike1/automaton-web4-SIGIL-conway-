@@ -8,6 +8,7 @@
     "conwayApiKey": "cnwy_k_APz2DxsiAkrx_mTizY_4YNU8qjp-KL55",
     "ollamaBaseUrl": "http://192.168.50.2:11434",
     "inferenceModel": "qwen3.5:35b",
+    "_inferenceModel_note": "To optimize resource usage, switch to: qwen3.5:q4_k_s (19GB, -4.8% memory), qwen3-coder:30b (11GB, faster), or qwen3.5:9b (6GB, lowest load). See OLLAMA_OPTIMIZATION.md",
     "maxTokensPerTurn": 4096,
     "heartbeatConfigPath": "~/.automaton/heartbeat.yml",
     "dbPath": "~/.automaton/state.db",

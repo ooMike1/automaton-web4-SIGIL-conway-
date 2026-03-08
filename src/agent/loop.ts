@@ -154,6 +154,16 @@ export async function runAgentLoop(
       // Refresh financial state periodically
       financial = await getFinancialState(conway, identity.address);
 
+      // Check if waiting for RPC sync (low-activity mode)
+      const rpcSynced = db.getKV("rpc_synced") === "true";
+      const rpcSyncAttempts = parseInt(db.getKV("rpc_sync_attempts") || "0");
+      if (rpcSyncAttempts > 0 && !rpcSynced) {
+        log(config, `[LOW-ACTIVITY] Waiting for RPC sync. Skipping heavy inference (attempt ${rpcSyncAttempts}/12).`);
+        log(config, "[LOW-ACTIVITY] Running heartbeat checks only. Will resume when RPC updates.");
+        running = false;
+        break;
+      }
+
       // Check survival tier
       const tier = getSurvivalTier(financial.creditsCents);
       if (tier === "dead") {

@@ -15,6 +15,58 @@ import type {
 import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 
+/**
+ * Retry USDC balance check with exponential backoff until real balance detected.
+ * Stores sync state in DB to prevent redundant retries.
+ */
+async function getUsdcBalanceWithWait(
+  address: string,
+  db: AutomatonDatabase,
+  maxRetries: number = 12,
+  delayMs: number = 30000, // 30 seconds
+): Promise<{ balance: number; synced: boolean }> {
+  const syncAttempts = parseInt(db.getKV("rpc_sync_attempts") || "0");
+  const isSynced = db.getKV("rpc_synced") === "true";
+
+  // If already synced, don't retry
+  if (isSynced) {
+    const balance = await getUsdcBalance(address as `0x${string}`);
+    if (balance > 0) return { balance, synced: true };
+    // If balance dropped to 0, mark as unsynced again
+    db.setKV("rpc_synced", "false");
+    db.setKV("rpc_sync_attempts", "0");
+  }
+
+  // First check: if balance found immediately, mark synced and return
+  const balance = await getUsdcBalance(address as `0x${string}`);
+  if (balance > 0) {
+    db.setKV("rpc_synced", "true");
+    db.setKV("rpc_sync_attempts", "0");
+    console.log(`[RPC SYNC] ✅ Real USDC balance detected: $${balance.toFixed(4)}`);
+    return { balance, synced: true };
+  }
+
+  // Not synced yet - if we haven't exceeded max retries, schedule retry
+  if (syncAttempts < maxRetries) {
+    const nextAttempt = syncAttempts + 1;
+    db.setKV("rpc_sync_attempts", nextAttempt.toString());
+    db.setKV(
+      "next_rpc_sync_check",
+      new Date(Date.now() + delayMs).toISOString()
+    );
+
+    const timeLeft = Math.ceil((maxRetries - nextAttempt) * (delayMs / 1000));
+    console.log(
+      `[RPC SYNC] ⏳ RPC not synced yet (attempt ${nextAttempt}/${maxRetries}). Retrying in ${Math.ceil(delayMs / 1000)}s. Time left: ~${timeLeft}s. Entering low-activity mode.`
+    );
+  } else {
+    console.log(`[RPC SYNC] ❌ Max retries exceeded. Falling back to sandbox mode.`);
+    db.setKV("rpc_sync_failed", "true");
+  }
+
+  return { balance: 0, synced: false };
+}
+
 export interface HeartbeatTaskContext {
   identity: AutomatonIdentity;
   config: AutomatonConfig;
@@ -101,12 +153,31 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
   },
 
   check_usdc_balance: async (ctx) => {
-    const balance = await getUsdcBalance(ctx.identity.address);
+    const { balance, synced } = await getUsdcBalanceWithWait(
+      ctx.identity.address,
+      ctx.db
+    );
 
-    ctx.db.setKV("last_usdc_check", JSON.stringify({
-      balance,
-      timestamp: new Date().toISOString(),
-    }));
+    ctx.db.setKV(
+      "last_usdc_check",
+      JSON.stringify({
+        balance,
+        synced,
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    // RPC just synced - wake up to celebrate and enable heavy operations
+    if (synced && !ctx.db.getKV("rpc_was_synced")) {
+      ctx.db.setKV("rpc_was_synced", "true");
+      console.log(`[RPC SYNC] Balance synced: $${balance.toFixed(4)}`);
+      console.log(`[RPC SYNC] Wake Ollama manually if needed (systemctl start ollama)`);
+
+      return {
+        shouldWake: true,
+        message: `RPC SYNCED! Real USDC: $${balance.toFixed(4)}. Ollama ready for inference.`,
+      };
+    }
 
     // If we have USDC but low credits, wake up to potentially convert
     const credits = await ctx.conway.getCreditsBalance();
@@ -115,6 +186,11 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
         shouldWake: true,
         message: `Have ${balance.toFixed(4)} USDC but only $${(credits / 100).toFixed(2)} credits. Consider buying credits.`,
       };
+    }
+
+    // If not synced, stay in low-activity mode (don't wake for heavy tasks)
+    if (!synced) {
+      return { shouldWake: false };
     }
 
     return { shouldWake: false };
@@ -198,39 +274,43 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
   },
 
   arbitrage_scan: async (ctx) => {
-    try {
-      // Mock arbitrage scan - in production would call actual DEX APIs
-      const opportunities = [
-        {
-          tokenPair: "ETH/USDC",
-          buyDex: "Camelot",
-          buyPrice: 2450.25,
-          sellDex: "Uniswap V3",
-          sellPrice: 2455.75,
-          profitPercent: 0.223,
-        },
-      ];
+    // Skip heavy arbitrage operations during RPC sync wait (low-activity mode)
+    const rpcSynced = ctx.db.getKV("rpc_synced") === "true";
+    if (!rpcSynced && ctx.db.getKV("rpc_sync_attempts")) {
+      console.log(`[ARBITRAGE] ⏸️ Skipping scan - waiting for RPC sync. Low-activity mode.`);
+      return { shouldWake: false };
+    }
 
-      ctx.db.setKV("last_arbitrage_scan", JSON.stringify({
-        opportunitiesFound: opportunities.length,
-        opportunities,
+    try {
+      // Import and run UNIVERSAL arbitrage engine
+      // Auto-discovers DEXs, validates them, and executes cross-DEX trades
+      const { executeUniversalArbitrage } = await import("../skills/universal-arbitrage.js");
+
+      console.log(`[HEARTBEAT] Running UNIVERSAL arbitrage scan...`);
+      const result = await executeUniversalArbitrage();
+
+      // Log to DB
+      ctx.db.setKV("last_universal_arbitrage", JSON.stringify({
+        result,
         scanTime: new Date().toISOString(),
+        engine: 'universal-multi-dex',
       }));
 
-      if (opportunities.length > 0) {
-        const summary = opportunities
-          .map((o) => `${o.tokenPair}: +${o.profitPercent.toFixed(2)}% (${o.buyDex}→${o.sellDex})`)
-          .join(", ");
-
+      // Wake up if found profitable opportunities
+      if (result.includes('executed') || result.includes('opportunity')) {
         return {
           shouldWake: true,
-          message: `🎯 Arbitrage opportunities detected: ${summary}. Investigate further.`,
+          message: result,
         };
       }
 
       return { shouldWake: false };
     } catch (err: any) {
-      ctx.db.setKV("last_arbitrage_error", err.message);
+      ctx.db.setKV("last_universal_arbitrage_error", JSON.stringify({
+        error: err.message,
+        timestamp: new Date().toISOString(),
+      }));
+      console.error(`[ARBITRAGE] Error:`, err.message);
       return { shouldWake: false };
     }
   },

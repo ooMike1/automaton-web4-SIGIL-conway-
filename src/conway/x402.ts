@@ -107,6 +107,30 @@ async function checkNetworkBalance(
 }
 
 /**
+ * Get USDC balance using Alchemy token API (more reliable than contract calls)
+ */
+async function getUsdcBalanceFromAlchemy(address: Address): Promise<number> {
+  try {
+    const resp = await fetch(
+      `https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq/getTokenBalances?address=${address}&contractAddresses=0xFF970A61A04b1cA14834A43f5dE4533eBDDB5F8f`
+    );
+    const data = await resp.json();
+
+    if (data.result?.tokenBalances?.[0]?.tokenBalance) {
+      const balance = BigInt(data.result.tokenBalances[0].tokenBalance);
+      const usdc = Number(balance) / 1e6;
+      if (usdc > 0) {
+        console.log(`[x402] ✅ USDC Balance from Alchemy: ${usdc.toFixed(6)} USDC`);
+        return usdc;
+      }
+    }
+  } catch (err: any) {
+    console.error(`[x402] Alchemy token API error: ${err.message}`);
+  }
+  return 0;
+}
+
+/**
  * Get the USDC balance for the automaton's wallet.
  * Attempts multiple networks to find balance.
  * Prioritizes Arbitrum as primary network.
@@ -115,7 +139,11 @@ export async function getUsdcBalance(
   address: Address,
   network: string = "eip155:42161", // Arbitrum as primary
 ): Promise<number> {
-  // Try primary network first
+  // First try Alchemy token API (most reliable)
+  const alchemyBalance = await getUsdcBalanceFromAlchemy(address);
+  if (alchemyBalance > 0) return alchemyBalance;
+
+  // Fallback to contract calls
   const primaryBalance = await checkNetworkBalance(address, network);
   if (primaryBalance > 0) return primaryBalance;
 
