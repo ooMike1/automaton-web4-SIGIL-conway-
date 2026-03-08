@@ -32,6 +32,7 @@ import { getUsdcBalance } from "../conway/x402.js";
 import { ulid } from "ulid";
 import { processAgathaIntention } from "./intent.js";
 import { executeAgathaCommand } from "./executor.js";
+import { getContextualMemory } from "./memory.js";
 
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
@@ -192,11 +193,17 @@ export async function runAgentLoop(
         isFirstRun,
       });
 
-      const messages = buildContextMessages(
-        systemPrompt,
-        recentTurns,
-        pendingInput,
-      );
+      // En tu loop de inferencia
+      const currentStatus = {
+        credits: "$9999.99",
+        usdc: "0.00",
+        lastActions: getContextualMemory(5) // Solo las últimas 5
+      };
+
+      const messages = [
+        { role: "system", content: `Estado actual: ${JSON.stringify(currentStatus)}. Recuerda tus limitaciones.` },
+        { role: "user", content: "..." }
+      ];
 
       // Capture input before clearing
       const currentInput = pendingInput;
