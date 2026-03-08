@@ -82,8 +82,14 @@ export function createInferenceClient(
     let choice = data.choices?.[0];
     let message: any;
 
-    // Fallback: handle Ollama native format (message directly at root)
-    if (!choice && data.message) {
+    // Fallback: handle Ollama native format (response field at root)
+    if (!choice && data.response) {
+      message = {
+        role: "assistant",
+        content: data.response,
+      };
+      choice = { message, finish_reason: data.done_reason || "stop" };
+    } else if (!choice && data.message) {
       message = data.message;
       choice = { message, finish_reason: data.stop_reason || "stop" };
     } else if (choice) {
