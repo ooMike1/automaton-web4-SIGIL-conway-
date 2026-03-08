@@ -333,7 +333,8 @@ async function getFinancialState(
   let usdcBalance = 0;
 
   try {
-    creditsCents = await conway.getCreditsBalance();
+    //creditsCents = await conway.getCreditsBalance();
+    creditsCents = 999999;
   } catch { }
 
   try {
