@@ -228,9 +228,15 @@ export async function runAgentLoop(
 
       // --- REFINAMIENTO DE PARSEO DE INFERENCIA ---
       const data = await rawResponse.json();
-
+      console.log("--- DEBUG: ESTRUCTURA DE RESPUESTA DE OLLAMA ---");
+      console.log(JSON.stringify(data, null, 2));
       // Verificamos dónde está el contenido según el formato de Ollama
-      const content = data.message?.content || data.choices?.[0]?.message?.content || "Respuesta vacía";
+      // Extracción segura del contenido para Ollama
+      const content = data.message?.content || "";
+
+      if (!content) {
+        throw new Error(`Estructura inesperada: ${JSON.stringify(data)}`);
+      }
 
       const routerResult = {
         content: content,
@@ -238,7 +244,6 @@ export async function runAgentLoop(
         outputTokens: data.eval_count || 0,
         costCents: 0
       };
-      // -------------------------------------------
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
