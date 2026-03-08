@@ -79,13 +79,21 @@ export function createInferenceClient(
     }
 
     const data = await resp.json() as any;
-    const choice = data.choices?.[0];
+    let choice = data.choices?.[0];
+    let message: any;
 
-    if (!choice) {
-      throw new Error("No completion choice returned from inference");
+    // Fallback: handle Ollama native format (message directly at root)
+    if (!choice && data.message) {
+      message = data.message;
+      choice = { message, finish_reason: data.stop_reason || "stop" };
+    } else if (choice) {
+      message = choice.message;
     }
 
-    const message = choice.message;
+    if (!message) {
+      console.error("[INFERENCE DEBUG] Unexpected response structure:", JSON.stringify(data).slice(0, 500));
+      throw new Error(`No completion choice returned from inference. Response: ${JSON.stringify(data).slice(0, 200)}`);
+    }
     const usage: TokenUsage = {
       promptTokens: data.usage?.prompt_tokens || 0,
       completionTokens: data.usage?.completion_tokens || 0,
