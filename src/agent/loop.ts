@@ -205,7 +205,7 @@ export async function runAgentLoop(
 
       // --- INJECTION: DYNAMIC OLLAMA URL ---
       // Leemos la URL del archivo de configuración (automaton.json)
-      const ollamaUrl = config.conwayApiUrl || "http://192.168.50.2:11434";
+      const ollamaUrl = config.ollamaBaseUrl || "http://192.168.50.2:11434";
 
       log(config, `[THINK] Sending raw request to local Ollama at ${ollamaUrl}...`);
 

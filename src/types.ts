@@ -32,6 +32,7 @@ export interface ProvisionResult {
 // ─── Configuration ───────────────────────────────────────────────
 
 export interface AutomatonConfig {
+  ollamaBaseUrl: string;
   name: string;
   genesisPrompt: string;
   creatorMessage?: string;
