@@ -56,6 +56,18 @@ export async function runAgentLoop(
   const { identity, config, db, conway, inference, social, skills, onStateChange, onTurnComplete } =
     options;
 
+  // --- LOG DE DIAGNÓSTICO DE COMUNICACIÓN ---
+  try {
+    const relayStatus = await fetch("https://social.conway.tech/health");
+    if (relayStatus.ok) {
+      logColor("[CONN] Status: ONLINE - Conectado al Relay Social de Conway.", "green");
+    } else {
+      logColor("[CONN] Status: DEGRADED - El Relay responde pero con error.", "yellow");
+    }
+  } catch (e) {
+    logColor("[CONN] Status: OFFLINE - Modo Soberano estricto (Aislado).", "red");
+  }
+
   const tools = createBuiltinTools(identity.sandboxId);
   const toolContext: ToolContext = {
     identity,
@@ -344,6 +356,7 @@ async function getFinancialState(
   return {
     creditsCents,
     usdcBalance,
+    status: "running",
     lastChecked: new Date().toISOString(),
   };
 }
@@ -379,3 +392,17 @@ function log(config: AutomatonConfig, message: string): void {
     console.log(`[${timestamp}] ${message}`);
   }
 }
+function logColor(message: string, color: string): void {
+  const colorCodes: Record<string, string> = {
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    reset: "\x1b[0m",
+  };
+
+  const code = colorCodes[color] || colorCodes.reset;
+  const timestamp = new Date().toISOString();
+  console.log(`${code}[${timestamp}] ${message}${colorCodes.reset}`);
+}
+

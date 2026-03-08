@@ -198,6 +198,7 @@ export interface FinancialState {
   creditsCents: number;
   usdcBalance: number;
   lastChecked: string;
+  status?: string;
 }
 
 export type SurvivalTier = "normal" | "low_compute" | "critical" | "dead";

@@ -269,7 +269,7 @@ async function run(): Promise<void> {
       // Reload skills (may have changed since last loop)
       try {
         skills = loadSkills(skillsDir, db);
-      } catch {}
+      } catch { }
 
       // Run the agent loop
       await runAgentLoop({
