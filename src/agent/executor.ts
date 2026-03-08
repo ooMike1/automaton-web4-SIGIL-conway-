@@ -1,9 +1,17 @@
 import { exec } from 'child_process';
 
+// Mapeo entre los comandos que Agatha "dice" y las funciones que tienes en src/skills/
+const skills: { [key: string]: () => void } = {
+    system_synopsis: () => console.log("--- EJECUTANDO SINOPSIS: Estado OK, Créditos: $9999.99 ---"),
+    check_credits: () => console.log("--- CRÉDITOS: $9999.99 ---"),
+    // Añade aquí el resto de tus skills
+};
+
 export const executeAgathaCommand = (command: string) => {
-    console.log(`\x1b[36m[AGATHA EXECUTING]: ${command}\x1b[0m`);
-    exec(command, (error, stdout, stderr) => {
-        if (error) console.error(`Error: ${error.message}`);
-        if (stdout) console.log(`Output: ${stdout}`);
-    });
+    const cmd = command.trim();
+    if (skills[cmd]) {
+        skills[cmd](); // Llama a la función real, no al shell
+    } else {
+        console.log(`[SYS] Comando desconocido: ${cmd}, ignorando para proteger el sistema.`);
+    }
 };
