@@ -184,8 +184,25 @@ export async function runAgentLoop(
       // Clear pending input after use
       pendingInput = undefined;
 
-      // ── Inference Call ──
-      log(config, `[THINK] Calling ${inference.getDefaultModel()}...`);
+      // ── INJECTION FOR SOVEREIGN MODE (ADAPTED) ──
+      const survivalTier = "sovereign";
+      log(config, `[THINK] Routing local inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
+
+      const inferenceTools = toolsToInferenceFormat(tools);
+
+      // Ejecutamos la llamada local
+      const rawResponse = await inference.chat(messages, {
+        tools: inferenceTools,
+        model: "qwen3.5:35b"
+      });
+
+      // ADAPTADOR: Convertimos la respuesta de Ollama al formato esperado por el sistema
+      const routerResult = {
+        content: rawResponse.content || "", // Aseguramos que content exista
+        inputTokens: rawResponse.usage?.prompt_tokens || 0,
+        outputTokens: rawResponse.usage?.completion_tokens || 0,
+        costCents: 0 // Como es local, el coste es cero
+      };
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
@@ -317,11 +334,11 @@ async function getFinancialState(
 
   try {
     creditsCents = await conway.getCreditsBalance();
-  } catch {}
+  } catch { }
 
   try {
     usdcBalance = await getUsdcBalance(address as `0x${string}`);
-  } catch {}
+  } catch { }
 
   return {
     creditsCents,
