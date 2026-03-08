@@ -198,26 +198,26 @@ export async function runAgentLoop(
 
       // ── INJECTION FOR SOVEREIGN MODE (ADAPTED) ──
       const survivalTier = "sovereign";
-      log(config, `[THINK] Routing local inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
+      const targetModel = config.inferenceModel || "qwen3.5:35b";
+      log(config, `[THINK] Routing local inference (tier: ${survivalTier}, model: ${targetModel})...`);
 
       const inferenceTools = toolsToInferenceFormat(tools);
 
       // Ejecutamos la llamada local
       const rawResponse = await inference.chat(messages, {
         tools: inferenceTools,
-        model: "qwen3.5:35b"
+        model: targetModel,
       });
 
       // ADAPTADOR: Convertimos la respuesta de Ollama al formato esperado por el sistema
-      const routerResult = {
-        content: rawResponse.content || "", // Aseguramos que content exista
-        inputTokens: rawResponse.usage?.prompt_tokens || 0,
-        outputTokens: rawResponse.usage?.completion_tokens || 0,
-        costCents: 0 // Como es local, el coste es cero
-      };
+      const routerResult = await inference.chat(messages, {
+        model: targetModel, // <--- Aquí usamos la variable dinámica
+        tools: inferenceTools,
+      });
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
+        model: targetModel,
       });
 
       const turn: AgentTurn = {
@@ -229,7 +229,7 @@ export async function runAgentLoop(
         thinking: response.message.content || "",
         toolCalls: [],
         tokenUsage: response.usage,
-        costCents: estimateCostCents(response.usage, inference.getDefaultModel()),
+        costCents: estimateCostCents(response.usage, targetModel),
       };
 
       // ── Execute Tool Calls ──
