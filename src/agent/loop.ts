@@ -31,6 +31,7 @@ import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 import { ulid } from "ulid";
 import { processAgathaIntention } from "./intent.js";
+import { executeAgathaCommand } from "./executor.js";
 
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
@@ -226,16 +227,25 @@ export async function runAgentLoop(
         })
       });
 
-      // --- REFINAMIENTO DE PARSEO DE INFERENCIA ---
+      /// --- PARSER SOSTENIBLE Y ROBUSTO ---
       const data = await rawResponse.json();
-      console.log("--- DEBUG: ESTRUCTURA DE RESPUESTA DE OLLAMA ---");
-      console.log(JSON.stringify(data, null, 2));
-      // Verificamos dónde está el contenido según el formato de Ollama
-      // Extracción segura del contenido para Ollama
-      const content = data.message?.content || "";
 
+      // Extraemos el contenido. Priorizamos el formato nativo de Ollama, 
+      // pero aceptamos el formato OpenAI si el primero falla.
+      const content = data.message?.content || data.choices?.[0]?.message?.content || "";
+
+      // Verificamos que realmente tengamos contenido antes de proceder
       if (!content) {
-        throw new Error(`Estructura inesperada: ${JSON.stringify(data)}`);
+        console.error("DEBUG: Estructura de respuesta inesperada:", JSON.stringify(data, null, 2));
+        throw new Error("No completion choice returned from inference");
+      }
+
+      // Extraemos bloques de bash usando una expresión regular
+      const bashRegex = /```bash\n([\s\S]*?)\n```/g;
+      let match;
+      while ((match = bashRegex.exec(content)) !== null) {
+        const commands = match[1].split('\n');
+        commands.forEach(cmd => executeAgathaCommand(cmd));
       }
 
       const routerResult = {
