@@ -31,23 +31,6 @@ async function main(): Promise<void> {
 
   // ─── CLI Commands ────────────────────────────────────────────
 
-  const originalFetch = global.fetch;
-  global.fetch = async (url: any, options: any) => {
-    const urlString = url.toString();
-
-    // Si intenta pedir mensajes, le decimos que no hay nada nuevo (evita 401)
-    if (urlString.includes("messages/poll")) {
-      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
-    }
-
-    // Si intenta validar saldo, le damos saldo infinito
-    if (urlString.includes("credits/balance")) {
-      return new Response(JSON.stringify({ creditsCents: 999999 }), { status: 200 });
-    }
-
-    return originalFetch(url, options);
-  };
-
   if (args.includes("--version") || args.includes("-v")) {
     console.log(`Conway Automaton v${VERSION}`);
     process.exit(0);
@@ -170,6 +153,27 @@ async function run(): Promise<void> {
     const { runSetupWizard } = await import("./setup/wizard.js");
     config = await runSetupWizard();
   }
+
+  // Setup fetch overrides with loaded config
+  const originalFetch = global.fetch;
+  const ollamaBaseUrl = config.ollamaBaseUrl || "http://127.0.0.1:11434";
+  const hostOnly = ollamaBaseUrl.replace(/https?:\/\//, '').split(':')[0];
+
+  global.fetch = async (url: any, options: any): Promise<Response> => {
+    const urlString = url.toString();
+
+    // Si la URL contiene el host configurado, es tráfico legítimo de inferencia
+    if (urlString.includes(hostOnly)) {
+      return originalFetch(url, options);
+    }
+
+    // Mocks basados en la configuración de Conway
+    if (urlString.includes("messages/poll")) {
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+    }
+    // ... resto de los mocks
+    return new Response(JSON.stringify({}), { status: 200 });
+  };
 
   // Load wallet
   const { account } = await getWallet();
