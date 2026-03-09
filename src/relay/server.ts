@@ -19,6 +19,7 @@ import {
   verifyAndSettlePayment,
   executeTask,
   TASK_PRICING,
+  initPricingSchema,
 } from "./task-handler.js";
 
 export const DEFAULT_RELAY_PORT = 3701;
@@ -71,6 +72,7 @@ export function startLocalRelay(options: RelayOptions): http.Server {
     )
   `).run();
   db.prepare("CREATE INDEX IF NOT EXISTS idx_to ON messages(to_address)").run();
+  initPricingSchema(db);
 
   // ─── Verificación de firma (solo modo red) ───────────────────
   async function verifyReadAuth(req: http.IncomingMessage): Promise<AuthResult> {

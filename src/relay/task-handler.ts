@@ -6,6 +6,25 @@ import type { Address, PrivateKeyAccount } from "viem";
 import { base } from "viem/chains";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import type Database from "better-sqlite3";
+
+export function initPricingSchema(db: InstanceType<typeof Database>): void {
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS pricing_events (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type  TEXT NOT NULL,
+      event      TEXT NOT NULL,
+      price      INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `).run();
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS pricing_state (
+      task_type  TEXT PRIMARY KEY,
+      price      INTEGER NOT NULL
+    )
+  `).run();
+}
 
 // ─── Pricing ───────────────────────────────────────────────────
 export const TASK_PRICING: Record<string, bigint> = {
