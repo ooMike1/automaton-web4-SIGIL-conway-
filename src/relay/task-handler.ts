@@ -54,6 +54,56 @@ export function recordPricingEvent(
   ).run(taskType, event, Number(price));
 }
 
+const PRICING_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+export function runPricingAdjustment(db: InstanceType<typeof Database>): void {
+  for (const taskType of Object.keys(PRICING_FLOORS)) {
+    const rows = db.prepare(`
+      SELECT event, COUNT(*) as cnt
+      FROM pricing_events
+      WHERE task_type = ?
+        AND created_at >= datetime('now', '-1 hour')
+      GROUP BY event
+    `).all(taskType) as Array<{ event: string; cnt: number }>;
+
+    const issued = rows.find((r) => r.event === "402")?.cnt ?? 0;
+    const paid   = rows.find((r) => r.event === "paid")?.cnt ?? 0;
+    const total  = issued + paid;
+
+    if (total < 3) continue;
+
+    const conversion = issued > 0 ? paid / issued : 0;
+    const current = getCurrentPricing(db, taskType);
+    let next = current;
+
+    if (conversion > 0.8) {
+      next = BigInt(Math.round(Number(current) * 1.25));
+    } else if (conversion < 0.2) {
+      next = BigInt(Math.round(Number(current) * 0.85));
+    } else {
+      continue; // hold
+    }
+
+    const floor = PRICING_FLOORS[taskType];
+    if (next < floor) next = floor;
+
+    db.prepare(`
+      INSERT INTO pricing_state (task_type, price) VALUES (?, ?)
+      ON CONFLICT(task_type) DO UPDATE SET price = excluded.price
+    `).run(taskType, Number(next));
+
+    const usdOld = (Number(current) / 1_000_000).toFixed(4);
+    const usdNew = (Number(next) / 1_000_000).toFixed(4);
+    console.log(`[PRICING] ${taskType}: $${usdOld} → $${usdNew} (conv: ${(conversion * 100).toFixed(0)}%, events: ${total})`);
+  }
+}
+
+export function startPricingEngine(db: InstanceType<typeof Database>): () => void {
+  const handle = setInterval(() => runPricingAdjustment(db), PRICING_INTERVAL_MS);
+  handle.unref(); // don't keep process alive just for this
+  return () => clearInterval(handle);
+}
+
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
 // ─── 402 Response Builder ──────────────────────────────────────

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { initPricingSchema, getCurrentPricing, recordPricingEvent, TASK_PRICING } from "../relay/task-handler.js";
+import { initPricingSchema, getCurrentPricing, recordPricingEvent, TASK_PRICING, runPricingAdjustment, startPricingEngine } from "../relay/task-handler.js";
 
 describe("Pricing DB schema", () => {
   let db: InstanceType<typeof Database>;
@@ -58,5 +58,52 @@ describe("recordPricingEvent", () => {
     expect(row.task_type).toBe("shell");
     expect(row.event).toBe("402");
     expect(row.price).toBe(10000);
+  });
+});
+
+describe("pricing engine adjustment", () => {
+  let db: InstanceType<typeof Database>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initPricingSchema(db);
+  });
+
+  it("raises price when conversion > 0.8", () => {
+    // 5 issued, 5 paid — 100% conversion
+    for (let i = 0; i < 5; i++) {
+      db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "402", 10000);
+      db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "paid", 10000);
+    }
+    runPricingAdjustment(db);
+    const newPrice = getCurrentPricing(db, "shell");
+    expect(newPrice).toBeGreaterThan(TASK_PRICING.shell);
+  });
+
+  it("lowers price when conversion < 0.2", () => {
+    db.prepare("INSERT INTO pricing_state (task_type, price) VALUES (?, ?)").run("shell", 100_000);
+    for (let i = 0; i < 10; i++) {
+      db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "402", 100000);
+    }
+    db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "paid", 100000);
+    runPricingAdjustment(db);
+    const newPrice = getCurrentPricing(db, "shell");
+    expect(newPrice).toBeLessThan(100_000n);
+  });
+
+  it("never goes below floor", () => {
+    for (let i = 0; i < 10; i++) {
+      db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "402", 10000);
+    }
+    runPricingAdjustment(db);
+    expect(getCurrentPricing(db, "shell")).toBeGreaterThanOrEqual(TASK_PRICING.shell);
+  });
+
+  it("skips adjustment with fewer than 3 events", () => {
+    db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "402", 10000);
+    db.prepare("INSERT INTO pricing_events (task_type, event, price, created_at) VALUES (?, ?, ?, datetime('now'))").run("shell", "paid", 10000);
+    runPricingAdjustment(db);
+    const row = db.prepare("SELECT price FROM pricing_state WHERE task_type = 'shell'").get();
+    expect(row).toBeUndefined();
   });
 });
