@@ -22,6 +22,7 @@ import { runAgentLoop } from "./agent/loop.js";
 import { loadSkills } from "./skills/loader.js";
 import { initStateRepo } from "./git/state-versioning.js";
 import { createSocialClient } from "./social/client.js";
+import { startLocalRelay } from "./relay/server.js";
 import type { AutomatonIdentity, AgentState, Skill, SocialClientInterface } from "./types.js";
 
 const VERSION = "0.1.0";
@@ -154,25 +155,17 @@ async function run(): Promise<void> {
     config = await runSetupWizard();
   }
 
-  // Setup fetch overrides with loaded config
+  // Override fetch: only mock Conway social relay (replaced by local relay)
   const originalFetch = global.fetch;
-  const ollamaBaseUrl = config.ollamaBaseUrl || "http://127.0.0.1:11434";
-  const hostOnly = ollamaBaseUrl.replace(/https?:\/\//, '').split(':')[0];
-
   global.fetch = async (url: any, options: any): Promise<Response> => {
     const urlString = url.toString();
-
-    // Si la URL contiene el host configurado, es tráfico legítimo de inferencia
-    if (urlString.includes(hostOnly)) {
-      return originalFetch(url, options);
+    if (urlString.includes("social.conway.tech")) {
+      if (urlString.includes("poll")) {
+        return new Response(JSON.stringify({ messages: [], next_cursor: null }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: `mock-${Date.now()}` }), { status: 200 });
     }
-
-    // Mocks basados en la configuración de Conway
-    if (urlString.includes("messages/poll")) {
-      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
-    }
-    // ... resto de los mocks
-    return new Response(JSON.stringify({}), { status: 200 });
+    return originalFetch(url, options);
   };
 
   // Load wallet
@@ -206,6 +199,56 @@ async function run(): Promise<void> {
   db.setIdentity("creator", config.creatorAddress);
   db.setIdentity("sandbox", config.sandboxId);
 
+  // Start local relay server (exposed via Cloudflare tunnel)
+  const automatonDir = getAutomatonDir();
+  const agentCardPath = resolvePath("~/.automaton/agent-card.json");
+
+  // Refresh agent-card.json with current relay URL so /.well-known/agent.json is up to date
+  if (config.relayPublicUrl) {
+    try {
+      const { readFileSync, writeFileSync } = await import("fs");
+      const card = JSON.parse(readFileSync(agentCardPath, "utf-8"));
+      // Update or add relay service endpoint
+      const relayService = card.services?.find((s: any) => s.name === "relay");
+      if (relayService) {
+        relayService.endpoint = config.relayPublicUrl;
+      } else {
+        card.services = (card.services ?? []).filter((s: any) => s.name !== "relay");
+        card.services.push({ name: "relay", endpoint: config.relayPublicUrl });
+      }
+      writeFileSync(agentCardPath, JSON.stringify(card, null, 2));
+      console.log(`[RELAY] agent-card.json actualizado con relay: ${config.relayPublicUrl}`);
+    } catch {
+      // agent-card.json may not exist yet — create it
+      const { writeFileSync } = await import("fs");
+      const card = {
+        type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+        name: config.name,
+        description: `Autonomous agent. Creator: ${config.creatorAddress}.`,
+        services: [
+          { name: "relay", endpoint: config.relayPublicUrl },
+          { name: "agentWallet", endpoint: `eip155:8453:${account.address}` },
+          { name: "conway", endpoint: config.conwayApiUrl },
+        ],
+        x402Support: true,
+        active: true,
+        parentAgent: config.creatorAddress,
+      };
+      writeFileSync(agentCardPath, JSON.stringify(card, null, 2));
+      console.log(`[RELAY] agent-card.json creado con relay: ${config.relayPublicUrl}`);
+    }
+  }
+
+  startLocalRelay({
+    dbDir: automatonDir,
+    networkMode: true,
+    agentCardPath,
+    account,
+    conwayApiUrl: config.conwayApiUrl,
+    inferenceApiKey: config.inferenceApiKey,
+    inferenceModel: config.inferenceModel || "gpt-4.1-nano",
+  });
+
   // Create Conway client
   const conway = createConwayClient({
     apiUrl: config.conwayApiUrl,
@@ -217,11 +260,12 @@ async function run(): Promise<void> {
   const inference = createInferenceClient({
     apiUrl: config.ollamaBaseUrl || "http://127.0.0.1:11434",
     apiKey,
+    inferenceApiKey: config.inferenceApiKey,
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
   });
 
-  // Create social client
+  // Create social client (only if socialRelayUrl configured)
   let social: SocialClientInterface | undefined;
   if (config.socialRelayUrl) {
     social = createSocialClient(config.socialRelayUrl, account);
