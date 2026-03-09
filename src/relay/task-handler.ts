@@ -4,6 +4,8 @@
 import { createPublicClient, createWalletClient, http } from "viem";
 import type { Address, PrivateKeyAccount } from "viem";
 import { base } from "viem/chains";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 // ─── Pricing ───────────────────────────────────────────────────
 export const TASK_PRICING: Record<string, bigint> = {
@@ -133,4 +135,77 @@ export async function verifyAndSettlePayment(
   } catch (err: any) {
     return { ok: false, error: `Settlement failed: ${err.shortMessage || err.message}` };
   }
+}
+
+// ─── Shell Executor ────────────────────────────────────────────
+const execFileAsync = promisify(execFile);
+
+const SHELL_ALLOWLIST = new Set([
+  "ls", "cat", "grep", "find", "python3", "node",
+  "curl", "echo", "wc", "head", "tail", "jq", "date",
+  "pwd", "uname", "df", "du",
+]);
+
+const BLOCKED_PATHS = ["/etc/", "/root/", "wallet.json", "/.ssh/"];
+
+export async function executeShell(input: string): Promise<string> {
+  let cmd: string;
+  let args: string[];
+  try {
+    const parsed = JSON.parse(input);
+    cmd  = parsed.command;
+    args = Array.isArray(parsed.args) ? parsed.args : [];
+  } catch {
+    const parts = input.trim().split(/\s+/);
+    cmd  = parts[0];
+    args = parts.slice(1);
+  }
+
+  if (!SHELL_ALLOWLIST.has(cmd)) {
+    throw new Error(`Command not allowed: "${cmd}". Allowed: ${[...SHELL_ALLOWLIST].join(", ")}`);
+  }
+  for (const a of args) {
+    if (BLOCKED_PATHS.some((p) => a.includes(p))) throw new Error("Blocked path in arguments");
+  }
+
+  // execFile keeps command and args separate — no shell injection possible
+  const { stdout, stderr } = await execFileAsync(cmd, args, { timeout: 30_000 });
+  return (stdout + (stderr ? `\n[stderr]: ${stderr}` : "")).trim();
+}
+
+// ─── Inference Executor ────────────────────────────────────────
+export async function executeInference(
+  prompt: string,
+  conwayApiUrl: string,
+  inferenceApiKey: string,
+  model: string,
+): Promise<string> {
+  const resp = await fetch(`${conwayApiUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${inferenceApiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 500,
+    }),
+  });
+  if (!resp.ok) throw new Error(`Inference API ${resp.status}: ${await resp.text()}`);
+  const data = await resp.json() as any;
+  return data.choices?.[0]?.message?.content ?? "(no response)";
+}
+
+// ─── Dispatcher ────────────────────────────────────────────────
+export interface TaskConfig {
+  conwayApiUrl: string;
+  inferenceApiKey: string;
+  inferenceModel: string;
+}
+
+export async function executeTask(type: string, input: string, config: TaskConfig): Promise<string> {
+  if (type === "shell")     return executeShell(input);
+  if (type === "inference") return executeInference(input, config.conwayApiUrl, config.inferenceApiKey, config.inferenceModel);
+  throw new Error(`Unknown task type: "${type}". Supported: ${Object.keys(TASK_PRICING).join(", ")}`);
 }
