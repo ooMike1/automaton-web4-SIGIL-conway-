@@ -20,6 +20,9 @@ import {
   executeTask,
   TASK_PRICING,
   initPricingSchema,
+  getCurrentPricing,
+  recordPricingEvent,
+  startPricingEngine,
 } from "./task-handler.js";
 
 export const DEFAULT_RELAY_PORT = 3701;
@@ -73,6 +76,7 @@ export function startLocalRelay(options: RelayOptions): http.Server {
   `).run();
   db.prepare("CREATE INDEX IF NOT EXISTS idx_to ON messages(to_address)").run();
   initPricingSchema(db);
+  startPricingEngine(db);
 
   // ─── Verificación de firma (solo modo red) ───────────────────
   async function verifyReadAuth(req: http.IncomingMessage): Promise<AuthResult> {
@@ -220,7 +224,9 @@ export function startLocalRelay(options: RelayOptions): http.Server {
       const xPayment = req.headers["x-payment"] as string | undefined;
 
       if (!xPayment) {
-        const req402 = buildPaymentRequired(type, account.address);
+        const currentPrice = getCurrentPricing(db, type);
+        recordPricingEvent(db, type, "402", currentPrice);
+        const req402 = buildPaymentRequired(type, account.address, db);
         res.writeHead(402, {
           "Content-Type": "application/json",
           "X-Payment-Required": Buffer.from(JSON.stringify(req402)).toString("base64"),
@@ -236,13 +242,16 @@ export function startLocalRelay(options: RelayOptions): http.Server {
         return;
       }
 
+      const paidPrice = getCurrentPricing(db, type);
+      recordPricingEvent(db, type, "paid", paidPrice);
+
       try {
         const result = await executeTask(type, input, {
           conwayApiUrl:    conwayApiUrl    ?? "https://api.conway.tech",
           inferenceApiKey: inferenceApiKey ?? "",
           inferenceModel:  inferenceModel  ?? "gpt-4.1-nano",
         });
-        const cost = (Number(TASK_PRICING[type]) / 1_000_000).toFixed(2);
+        const cost = (Number(paidPrice) / 1_000_000).toFixed(4);
         return sendJson(res, 200, { result, type, cost: `${cost} USDC`, txHash: settle.txHash });
       } catch (err: any) {
         const status = (err.message.includes("not allowed") || err.message.includes("Blocked")) ? 400 : 500;

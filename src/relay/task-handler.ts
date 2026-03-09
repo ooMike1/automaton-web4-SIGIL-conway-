@@ -119,8 +119,12 @@ interface PaymentRequiredBody {
   }>;
 }
 
-export function buildPaymentRequired(taskType: string, payToAddress: Address): PaymentRequiredBody {
-  const amount = TASK_PRICING[taskType] ?? TASK_PRICING.shell;
+export function buildPaymentRequired(
+  taskType: string,
+  payToAddress: Address,
+  db: InstanceType<typeof Database>,
+): PaymentRequiredBody {
+  const amount = getCurrentPricing(db, taskType);
   return {
     accepts: [{
       scheme: "exact",
