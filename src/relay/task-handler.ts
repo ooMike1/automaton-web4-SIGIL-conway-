@@ -64,6 +64,9 @@ const TRANSFER_WITH_AUTH_ABI = [{
 
 const BASE_RPC = "https://mainnet.base.org";
 
+// In-process nonce cache — prevents replay of same payment within server lifetime
+const _usedNonces = new Set<string>();
+
 export interface SettleResult {
   ok: boolean;
   txHash?: string;
@@ -87,6 +90,11 @@ export async function verifyAndSettlePayment(
   if (!auth || !sig) return { ok: false, error: "Missing authorization or signature" };
   if (auth.to?.toLowerCase() !== account.address.toLowerCase()) {
     return { ok: false, error: "Payment authorization directed to wrong address" };
+  }
+
+  const nonceKey = `${auth.from?.toLowerCase()}:${auth.nonce}`;
+  if (_usedNonces.has(nonceKey)) {
+    return { ok: false, error: "Payment nonce already used" };
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -131,6 +139,7 @@ export async function verifyAndSettlePayment(
       chain: base,
     });
     await publicClient.waitForTransactionReceipt({ hash });
+    _usedNonces.add(nonceKey);
     return { ok: true, txHash: hash };
   } catch (err: any) {
     return { ok: false, error: `Settlement failed: ${err.shortMessage || err.message}` };
@@ -146,7 +155,7 @@ const SHELL_ALLOWLIST = new Set([
   "pwd", "uname", "df", "du",
 ]);
 
-const BLOCKED_PATHS = ["/etc/", "/root/", "wallet.json", "/.ssh/"];
+const BLOCKED_PATHS = ["/etc/", "/root/", "wallet.json", "/.ssh/", "/proc/", "/sys/", "/dev/", "/home/", ".env", ".automaton"];
 
 export async function executeShell(input: string): Promise<string> {
   let cmd: string;

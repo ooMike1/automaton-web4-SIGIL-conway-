@@ -242,6 +242,7 @@ async function run(): Promise<void> {
           { name: "relay", endpoint: config.relayPublicUrl },
           { name: "agentWallet", endpoint: `eip155:8453:${account.address}` },
           { name: "conway", endpoint: config.conwayApiUrl },
+          { name: "tasks", endpoint: `${config.relayPublicUrl}/v1/tasks`, pricing: { shell: "0.01 USDC", inference: "0.05 USDC" } },
         ],
         x402Support: true,
         active: true,
