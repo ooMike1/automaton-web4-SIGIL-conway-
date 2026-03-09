@@ -216,6 +216,19 @@ async function run(): Promise<void> {
         card.services = (card.services ?? []).filter((s: any) => s.name !== "relay");
         card.services.push({ name: "relay", endpoint: config.relayPublicUrl });
       }
+      // Update or add tasks service endpoint
+      const tasksEndpoint = {
+        name: "tasks",
+        endpoint: `${config.relayPublicUrl}/v1/tasks`,
+        pricing: { shell: "0.01 USDC", inference: "0.05 USDC" },
+      };
+      const tasksIdx = card.services?.findIndex((s: any) => s.name === "tasks");
+      if (tasksIdx >= 0) {
+        card.services[tasksIdx] = tasksEndpoint;
+      } else {
+        card.services = (card.services ?? []);
+        card.services.push(tasksEndpoint);
+      }
       writeFileSync(agentCardPath, JSON.stringify(card, null, 2));
       console.log(`[RELAY] agent-card.json actualizado con relay: ${config.relayPublicUrl}`);
     } catch {
