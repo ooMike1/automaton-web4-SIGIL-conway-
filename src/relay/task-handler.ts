@@ -1,6 +1,7 @@
 /**
  * Task Handler — x402 payment gate + task execution
  */
+import type { Address } from "viem";
 
 // ─── Pricing ───────────────────────────────────────────────────
 export const TASK_PRICING: Record<string, bigint> = {
@@ -8,10 +9,22 @@ export const TASK_PRICING: Record<string, bigint> = {
   inference: 50_000n,  // $0.05 USDC
 };
 
-const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
 // ─── 402 Response Builder ──────────────────────────────────────
-export function buildPaymentRequired(taskType: string, payToAddress: string) {
+interface PaymentRequiredBody {
+  accepts: Array<{
+    scheme: string;
+    network: string;
+    maxAmountRequired: string;
+    payToAddress: Address;
+    asset: Address;         // x402 v2 field name
+    maxTimeoutSeconds: number;
+    resource: string;
+  }>;
+}
+
+export function buildPaymentRequired(taskType: string, payToAddress: Address): PaymentRequiredBody {
   const amount = TASK_PRICING[taskType] ?? TASK_PRICING.shell;
   return {
     accepts: [{
