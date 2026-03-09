@@ -32,6 +32,28 @@ export const TASK_PRICING: Record<string, bigint> = {
   inference: 50_000n,  // $0.05 USDC
 };
 
+const PRICING_FLOORS: Record<string, bigint> = {
+  shell:     10_000n,
+  inference: 50_000n,
+};
+
+export function getCurrentPricing(db: InstanceType<typeof Database>, taskType: string): bigint {
+  const row = db.prepare("SELECT price FROM pricing_state WHERE task_type = ?").get(taskType) as { price: number } | undefined;
+  if (row) return BigInt(row.price);
+  return PRICING_FLOORS[taskType] ?? PRICING_FLOORS.shell;
+}
+
+export function recordPricingEvent(
+  db: InstanceType<typeof Database>,
+  taskType: string,
+  event: "402" | "paid",
+  price: bigint,
+): void {
+  db.prepare(
+    "INSERT INTO pricing_events (task_type, event, price) VALUES (?, ?, ?)"
+  ).run(taskType, event, Number(price));
+}
+
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
 // ─── 402 Response Builder ──────────────────────────────────────
