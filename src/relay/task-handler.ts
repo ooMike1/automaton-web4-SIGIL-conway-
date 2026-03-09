@@ -83,13 +83,22 @@ export async function verifyAndSettlePayment(
   const auth = payment?.payload?.authorization;
   const sig  = payment?.payload?.signature as string | undefined;
   if (!auth || !sig) return { ok: false, error: "Missing authorization or signature" };
+  if (auth.to?.toLowerCase() !== account.address.toLowerCase()) {
+    return { ok: false, error: "Payment authorization directed to wrong address" };
+  }
 
   const now = Math.floor(Date.now() / 1000);
   if (now < Number(auth.validAfter))  return { ok: false, error: "Payment not yet valid" };
   if (now > Number(auth.validBefore)) return { ok: false, error: "Payment expired" };
 
   const required = TASK_PRICING[taskType] ?? TASK_PRICING.shell;
-  if (BigInt(auth.value) < required) {
+  let payValue: bigint;
+  try {
+    payValue = BigInt(auth.value ?? "0");
+  } catch {
+    return { ok: false, error: "Invalid payment value" };
+  }
+  if (payValue < required) {
     return { ok: false, error: `Insufficient payment: got ${auth.value}, need ${required}` };
   }
 
