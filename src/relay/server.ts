@@ -14,6 +14,12 @@ import path from "path";
 import { verifyMessage } from "viem";
 import type { PrivateKeyAccount } from "viem";
 import { ulid } from "ulid";
+import {
+  buildPaymentRequired,
+  verifyAndSettlePayment,
+  executeTask,
+  TASK_PRICING,
+} from "./task-handler.js";
 
 export const DEFAULT_RELAY_PORT = 3701;
 const SIG_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutos
@@ -196,6 +202,50 @@ export function startLocalRelay(options: RelayOptions): http.Server {
         return sendJson(res, 404, { error: "Agent card not found" });
       }
       return;
+    }
+
+    // POST /v1/tasks — paid task execution (x402)
+    if (req.method === "POST" && pathname === "/v1/tasks") {
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { error: "Invalid JSON body" }); }
+
+      const { type, input } = body ?? {};
+      if (!type || !input)        return sendJson(res, 400, { error: "Missing fields: type, input" });
+      if (!TASK_PRICING[type])    return sendJson(res, 400, { error: `Unknown type "${type}". Supported: ${Object.keys(TASK_PRICING).join(", ")}` });
+      if (!account)               return sendJson(res, 503, { error: "Agent wallet not configured" });
+
+      const xPayment = req.headers["x-payment"] as string | undefined;
+
+      if (!xPayment) {
+        const req402 = buildPaymentRequired(type, account.address);
+        res.writeHead(402, {
+          "Content-Type": "application/json",
+          "X-Payment-Required": Buffer.from(JSON.stringify(req402)).toString("base64"),
+        });
+        res.end(JSON.stringify(req402));
+        return;
+      }
+
+      const settle = await verifyAndSettlePayment(xPayment, type, account);
+      if (!settle.ok) {
+        res.writeHead(402, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: settle.error }));
+        return;
+      }
+
+      try {
+        const result = await executeTask(type, input, {
+          conwayApiUrl:    conwayApiUrl    ?? "https://api.conway.tech",
+          inferenceApiKey: inferenceApiKey ?? "",
+          inferenceModel:  inferenceModel  ?? "gpt-4.1-nano",
+        });
+        const cost = (Number(TASK_PRICING[type]) / 1_000_000).toFixed(2);
+        return sendJson(res, 200, { result, type, cost: `${cost} USDC`, txHash: settle.txHash });
+      } catch (err: any) {
+        const status = (err.message.includes("not allowed") || err.message.includes("Blocked")) ? 400 : 500;
+        return sendJson(res, status, { error: err.message });
+      }
     }
 
     sendJson(res, 404, { error: "Not found" });
