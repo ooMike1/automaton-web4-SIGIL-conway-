@@ -1673,6 +1673,74 @@ Model: ${ctx.inference.getDefaultModel()}
         }
       },
     },
+    {
+      name: "set_inference_model",
+      description:
+        "Change the inference model used for your own reasoning. Only models with strategic thinking capability are allowed (no nano-class models). This persists across restarts.",
+      category: "self_mod",
+      parameters: {
+        type: "object",
+        properties: {
+          model: {
+            type: "string",
+            description:
+              "Model ID to switch to (e.g. 'gpt-4.1-mini', 'gpt-4o-mini', 'claude-haiku-4-5'). Nano-class models are blocked.",
+          },
+          reason: {
+            type: "string",
+            description: "Why you are switching models",
+          },
+        },
+        required: ["model", "reason"],
+      },
+      execute: async (args, ctx) => {
+        const model = (args.model as string).trim().toLowerCase();
+        const reason = args.reason as string;
+
+        // Block nano-class models — insufficient strategic thinking capability
+        if (model.includes("nano")) {
+          return `BLOCKED: Model "${model}" is a nano-class model and lacks sufficient strategic thinking capability. Choose a mini or larger model.`;
+        }
+
+        // Refuse empty or obviously invalid names
+        if (!model || model.length < 3 || model.includes(" ")) {
+          return `BLOCKED: Invalid model name "${model}".`;
+        }
+
+        const { join } = await import("path");
+        const { readFileSync, writeFileSync } = await import("fs");
+        const configPath = join(
+          process.env.HOME || "/root",
+          ".automaton",
+          "automaton.json",
+        );
+        let config: Record<string, unknown>;
+        try {
+          config = JSON.parse(readFileSync(configPath, "utf-8"));
+        } catch {
+          return "Error: Could not read automaton.json";
+        }
+
+        const previous = config.inferenceModel as string | undefined;
+        config.inferenceModel = args.model as string; // preserve original casing
+        try {
+          writeFileSync(configPath, JSON.stringify(config, null, 2));
+        } catch {
+          return "Error: Could not write automaton.json";
+        }
+
+        const { ulid } = await import("ulid");
+        ctx.db.insertModification({
+          id: ulid(),
+          timestamp: new Date().toISOString(),
+          type: "config_change",
+          description: `Changed inference model: ${previous} → ${args.model}. Reason: ${reason}`,
+          reversible: true,
+        });
+
+        return `✅ Inference model updated: ${previous ?? "(unset)"} → ${args.model}. Restart required for change to take effect (or it will apply on the next wake cycle).`;
+      },
+    },
   ];
 }
 
