@@ -1759,7 +1759,14 @@ Model: ${ctx.inference.getDefaultModel()}
           reversible: true,
         });
 
-        return `✅ Inference model updated: ${previous ?? "(unset)"} → ${args.model}. Restart required for change to take effect (or it will apply on the next wake cycle).`;
+        // Auto-restart after 1s so the tool result is persisted before process exit
+        setTimeout(() => {
+          import("child_process").then(({ execFile }) => {
+            execFile("systemctl", ["restart", "conway"]);
+          });
+        }, 1000);
+
+        return `✅ Inference model updated: ${previous ?? "(unset)"} → ${args.model}. Restarting service now to apply change...`;
       },
     },
   ];
