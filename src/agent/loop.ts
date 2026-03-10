@@ -368,11 +368,16 @@ export async function runAgentLoop(
         } else {
           db.deleteKV?.("wakeup_nudge_sent");
           // Agent produced text without tool calls.
-          // This is a natural pause point -- no work queued, sleep for 30 minutes.
-          log(config, "[IDLE] No pending inputs. Entering 30-minute sleep.");
+          // Free inference (Groq) → 5-minute idle sleep; paid → 30 minutes.
+          const FREE_MODEL_PREFIXES = ["llama", "mixtral", "gemma", "deepseek-r1", "qwen", "whisper"];
+          const currentModelName = (config.inferenceModel || "").toLowerCase();
+          const isFreeModel = FREE_MODEL_PREFIXES.some((p) => currentModelName.startsWith(p));
+          const idleSleepMs = isFreeModel ? 300_000 : 1_800_000;
+          const idleLabel = isFreeModel ? "5-minute" : "30-minute";
+          log(config, `[IDLE] No pending inputs. Entering ${idleLabel} sleep (model: ${config.inferenceModel}).`);
           db.setKV(
             "sleep_until",
-            new Date(Date.now() + 1_800_000).toISOString(),
+            new Date(Date.now() + idleSleepMs).toISOString(),
           );
           db.setAgentState("sleeping");
           onStateChange?.("sleeping");

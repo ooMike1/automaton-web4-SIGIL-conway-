@@ -310,12 +310,13 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           return `BLOCKED: ${validation.reason}\nChecks: ${validation.checks.map((c) => `${c.name}: ${c.passed ? "PASS" : "FAIL"} (${c.detail})`).join(", ")}`;
         }
 
+        const description = (args.description as string) || "File modification";
         const result = await editFile(
           ctx.conway,
           ctx.db,
           filePath,
           content,
-          args.description as string,
+          description,
         );
 
         if (!result.success) {
