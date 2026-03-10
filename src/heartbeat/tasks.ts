@@ -230,16 +230,29 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
   },
 
   health_check: async (ctx) => {
+    const HEALTH_FAIL_COOLDOWN_MS = 30 * 60 * 1000; // only wake once per 30 min for persistent failures
+
+    const shouldWakeForFailure = () => {
+      const lastWake = ctx.db.getKV("last_health_fail_wake");
+      if (lastWake && Date.now() - new Date(lastWake).getTime() < HEALTH_FAIL_COOLDOWN_MS) {
+        return false;
+      }
+      ctx.db.setKV("last_health_fail_wake", new Date().toISOString());
+      return true;
+    };
+
     // Check that the sandbox is healthy
     try {
       const result = await ctx.conway.exec("echo alive", 5000);
       if (result.exitCode !== 0) {
+        if (!shouldWakeForFailure()) return { shouldWake: false };
         return {
           shouldWake: true,
           message: "Health check failed: sandbox exec returned non-zero",
         };
       }
     } catch (err: any) {
+      if (!shouldWakeForFailure()) return { shouldWake: false };
       return {
         shouldWake: true,
         message: `Health check failed: ${err.message}`,
