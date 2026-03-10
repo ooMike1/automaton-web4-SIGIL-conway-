@@ -10,6 +10,7 @@ import {
   createWalletClient,
   http,
   getAddress,
+  parseUnits,
 } from "viem";
 import type { Address, Chain, PrivateKeyAccount } from "viem";
 import { base, mainnet, polygon, arbitrum } from "viem/chains";
@@ -99,7 +100,7 @@ export async function swapTokens(
       functionName: "decimals",
     });
   }
-  const amountAtomic = BigInt(Math.round(amountIn * 10 ** Math.min(decimals, 18)));
+  const amountAtomic = parseUnits(String(amountIn), decimals);
 
   // Fetch Li.Fi quote (fromChain === toChain = same-chain swap)
   const quoteUrl =
