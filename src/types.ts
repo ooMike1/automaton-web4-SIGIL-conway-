@@ -55,6 +55,7 @@ export interface AutomatonConfig {
   socialRelayUrl?: string;
   inferenceApiKey?: string;
   groqApiKey?: string;
+  openRouterApiKey?: string;
   relayPublicUrl?: string;
 }
 

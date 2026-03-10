@@ -295,6 +295,7 @@ async function run(): Promise<void> {
     apiKey,
     inferenceApiKey: config.inferenceApiKey,
     groqApiKey: config.groqApiKey,
+    openRouterApiKey: config.openRouterApiKey,
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
   });

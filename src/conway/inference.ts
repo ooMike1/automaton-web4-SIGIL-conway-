@@ -25,6 +25,11 @@ function isGroqModel(model: string): boolean {
   return GROQ_MODEL_PREFIXES.some((p) => lower.startsWith(p));
 }
 
+// OpenRouter models always contain a "/" (e.g. "deepseek/deepseek-chat-v3:free")
+function isOpenRouterModel(model: string): boolean {
+  return model.includes("/");
+}
+
 interface InferenceClientOptions {
   apiUrl: string;
   apiKey: string;
@@ -32,6 +37,8 @@ interface InferenceClientOptions {
   inferenceApiKey?: string;
   /** Groq API key — si se provee, los modelos Groq se enrutan automáticamente a api.groq.com */
   groqApiKey?: string;
+  /** OpenRouter API key — si se provee, los modelos con "/" se enrutan a openrouter.ai */
+  openRouterApiKey?: string;
   defaultModel: string;
   maxTokens: number;
   lowComputeModel?: string;
@@ -77,13 +84,24 @@ export function createInferenceClient(
     }
 
     // Auto-route Groq models to api.groq.com if a Groq key is configured
-    const useGroq = isGroqModel(model) && !!options.groqApiKey;
-    const effectiveUrl = useGroq ? "https://api.groq.com/openai" : apiUrl;
+    const useGroq = isGroqModel(model) && !!options.groqApiKey && !isOpenRouterModel(model);
+    // Auto-route OpenRouter models (contain "/") to openrouter.ai if a key is configured
+    const useOpenRouter = isOpenRouterModel(model) && !!options.openRouterApiKey;
+
+    const effectiveUrl = useOpenRouter
+      ? "https://openrouter.ai/api"
+      : useGroq
+        ? "https://api.groq.com/openai"
+        : apiUrl;
 
     const isLocal = effectiveUrl.includes("localhost") || effectiveUrl.includes("127.0.0.1") || effectiveUrl.includes("192.168.");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (!isLocal) {
-      if (useGroq) {
+      if (useOpenRouter) {
+        headers["Authorization"] = `Bearer ${options.openRouterApiKey}`;
+        headers["HTTP-Referer"] = "https://conway.tech";
+        headers["X-Title"] = "Agatha Automaton";
+      } else if (useGroq) {
         headers["Authorization"] = `Bearer ${options.groqApiKey}`;
       } else {
         const key = options.inferenceApiKey || apiKey;
@@ -91,7 +109,9 @@ export function createInferenceClient(
       }
     }
 
-    if (useGroq) {
+    if (useOpenRouter) {
+      console.log(`[INFERENCE] Routing to OpenRouter: ${model}`);
+    } else if (useGroq) {
       console.log(`[INFERENCE] Routing to Groq: ${model}`);
     }
 
@@ -146,12 +166,15 @@ export function createInferenceClient(
         },
       }));
 
+    // Reasoning models (e.g. arcee-ai/trinity-mini) return content=null and text in reasoning field
+    const textContent = message.content || message.reasoning || "";
+
     return {
       id: data.id || "",
       model: data.model || model,
       message: {
         role: message.role,
-        content: message.content || "",
+        content: textContent,
         tool_calls: toolCalls,
       },
       toolCalls,

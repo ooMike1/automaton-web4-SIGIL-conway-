@@ -371,7 +371,9 @@ export async function runAgentLoop(
           // Free inference (Groq) → 5-minute idle sleep; paid → 30 minutes.
           const FREE_MODEL_PREFIXES = ["llama", "mixtral", "gemma", "deepseek-r1", "qwen", "whisper"];
           const currentModelName = (config.inferenceModel || "").toLowerCase();
-          const isFreeModel = FREE_MODEL_PREFIXES.some((p) => currentModelName.startsWith(p));
+          // OpenRouter models contain "/"; Groq models match prefixes — both are free
+          const isFreeModel = currentModelName.includes("/") ||
+            FREE_MODEL_PREFIXES.some((p) => currentModelName.startsWith(p));
           const idleSleepMs = isFreeModel ? 300_000 : 1_800_000;
           const idleLabel = isFreeModel ? "5-minute" : "30-minute";
           log(config, `[IDLE] No pending inputs. Entering ${idleLabel} sleep (model: ${config.inferenceModel}).`);
