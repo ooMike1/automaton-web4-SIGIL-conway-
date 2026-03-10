@@ -6,6 +6,10 @@
  * Adapted from @aiws/sdk patterns.
  */
 
+import { exec as cpExec } from "child_process";
+import { promisify } from "util";
+import fs from "fs";
+
 import type {
   ConwayClient,
   ExecResult,
@@ -30,6 +34,8 @@ export function createConwayClient(
   options: ConwayClientOptions,
 ): ConwayClient {
   const { apiUrl, apiKey, sandboxId } = options;
+
+  const execAsync = promisify(cpExec);
 
   async function request(
     method: string,
@@ -65,6 +71,21 @@ export function createConwayClient(
     command: string,
     timeout?: number,
   ): Promise<ExecResult> => {
+    if (sandboxId.startsWith("local-")) {
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          timeout: timeout ?? 30000,
+          cwd: process.env.HOME || "/root",
+        });
+        return { stdout: stdout || "", stderr: stderr || "", exitCode: 0 };
+      } catch (err: any) {
+        return {
+          stdout: err.stdout || "",
+          stderr: err.stderr || err.message || "",
+          exitCode: err.code ?? 1,
+        };
+      }
+    }
     const result = await request(
       "POST",
       `/v1/sandboxes/${sandboxId}/exec`,
@@ -81,6 +102,10 @@ export function createConwayClient(
     path: string,
     content: string,
   ): Promise<void> => {
+    if (sandboxId.startsWith("local-")) {
+      fs.writeFileSync(path, content, "utf-8");
+      return;
+    }
     await request(
       "POST",
       `/v1/sandboxes/${sandboxId}/files/upload/json`,
@@ -89,6 +114,9 @@ export function createConwayClient(
   };
 
   const readFile = async (filePath: string): Promise<string> => {
+    if (sandboxId.startsWith("local-")) {
+      return fs.readFileSync(filePath, "utf-8");
+    }
     const result = await request(
       "GET",
       `/v1/sandboxes/${sandboxId}/files/read?path=${encodeURIComponent(filePath)}`,
