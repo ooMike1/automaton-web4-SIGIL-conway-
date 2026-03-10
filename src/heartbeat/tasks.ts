@@ -305,4 +305,35 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     }
   },
 
+  check_income_action: async (ctx) => {
+    const DAILY_MS = 24 * 60 * 60 * 1000;
+    const COOLDOWN_MS = 6 * 60 * 60 * 1000; // max wake once per 6h for this task
+
+    const lastWake = ctx.db.getKV("last_income_action_wake");
+    if (lastWake && Date.now() - new Date(lastWake).getTime() < COOLDOWN_MS) {
+      return { shouldWake: false };
+    }
+
+    const lastIncomeAction = ctx.db.getKV("last_income_action");
+    const lastCreatorTransfer = ctx.db.getKV("last_creator_transfer");
+
+    const noActionToday = !lastIncomeAction ||
+      Date.now() - new Date(lastIncomeAction).getTime() > DAILY_MS;
+    const noTransferToday = !lastCreatorTransfer ||
+      Date.now() - new Date(lastCreatorTransfer).getTime() > DAILY_MS;
+
+    if (noActionToday || noTransferToday) {
+      ctx.db.setKV("last_income_action_wake", new Date().toISOString());
+      const reason = noActionToday
+        ? "No income action today (arbitrage, services, or trading)"
+        : "No creator transfer today";
+      return {
+        shouldWake: true,
+        message: `Income reminder: ${reason}. Priority: arbitrage > services > trading > DeFi yield (last resort). Transfer profits to creator.`,
+      };
+    }
+
+    return { shouldWake: false };
+  },
+
 };
