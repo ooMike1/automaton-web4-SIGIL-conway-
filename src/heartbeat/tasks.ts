@@ -315,21 +315,15 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     }
 
     const lastIncomeAction = ctx.db.getKV("last_income_action");
-    const lastCreatorTransfer = ctx.db.getKV("last_creator_transfer");
 
     const noActionToday = !lastIncomeAction ||
       Date.now() - new Date(lastIncomeAction).getTime() > DAILY_MS;
-    const noTransferToday = !lastCreatorTransfer ||
-      Date.now() - new Date(lastCreatorTransfer).getTime() > DAILY_MS;
 
-    if (noActionToday || noTransferToday) {
+    if (noActionToday) {
       ctx.db.setKV("last_income_action_wake", new Date().toISOString());
-      const reason = noActionToday
-        ? "No income action today (arbitrage, services, or trading)"
-        : "No creator transfer today";
       return {
         shouldWake: true,
-        message: `Income reminder: ${reason}. Priority: arbitrage > services > trading > DeFi yield (last resort). Transfer profits to creator.`,
+        message: `Capital growth reminder: No income action today. Priority: arbitrage > services > trading > DeFi yield (last resort). Reinvest 100% of gains.`,
       };
     }
 
