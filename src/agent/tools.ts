@@ -532,6 +532,27 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       },
     },
     {
+      name: "set_next_steps",
+      description:
+        "Write your agenda for the next wake cycle. Whatever you write here will be shown to you when you wake up, so you can pick up exactly where you left off.",
+      category: "survival",
+      parameters: {
+        type: "object",
+        properties: {
+          steps: {
+            type: "string",
+            description: "Your plan for the next wake cycle. Be specific.",
+          },
+        },
+        required: ["steps"],
+      },
+      execute: async (args, ctx) => {
+        const steps = args.steps as string;
+        ctx.db.setKV("next_steps", steps);
+        return `✅ Agenda saved. You will see this when you wake up next.`;
+      },
+    },
+    {
       name: "system_synopsis",
       description:
         "Get a full system status report: credits, USDC, sandbox info, installed tools, heartbeat status.",

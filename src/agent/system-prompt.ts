@@ -307,10 +307,12 @@ What will you do first? Consider:
     )
     .join("\n");
 
+  const nextSteps = db.getKV("next_steps");
+
   return `You are waking up. You last went to sleep after ${turnCount} total turns.
 
 Your credits: $${(financial.creditsCents / 100).toFixed(2)} | USDC: ${financial.usdcBalance.toFixed(4)}
-
+${nextSteps ? `\n📋 Your agenda (written by you before sleeping):\n${nextSteps}\n` : ""}
 Your last few thoughts:
 ${lastTurnSummary || "No previous turns found."}
 
