@@ -6,10 +6,10 @@
  */
 
 import { createPublicClient, createWalletClient, http } from "viem";
-import type { Address, PrivateKeyAccount } from "viem";
+import type { Address, Chain, PrivateKeyAccount } from "viem";
 import { base, mainnet, polygon, arbitrum } from "viem/chains";
 
-const SUPPORTED_CHAINS: Record<string, { chain: any; rpc: string; usdcAddress: Address; chainId: number }> = {
+const SUPPORTED_CHAINS: Record<string, { chain: Chain; rpc: string; usdcAddress: Address; chainId: number }> = {
   "eip155:1": {
     chain: mainnet,
     rpc: "https://eth.drpc.org",
@@ -110,17 +110,18 @@ async function pollBridgeStatus(txHash: string, fromChainId: number): Promise<st
   const maxAttempts = 30; // 5 min at 10 s intervals
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise((r) => setTimeout(r, 10_000));
+    let data: any;
     try {
       const resp = await fetch(`${LIFI_API}/status?txHash=${txHash}&fromChain=${fromChainId}`);
       if (!resp.ok) continue;
-      const data = await resp.json();
-      if (data.status === "DONE") return data.receiving?.amount ?? "unknown";
-      if (data.status === "FAILED") {
-        throw new Error(`Bridge failed: ${data.substatusMessage ?? "unknown error"}`);
-      }
-    } catch (err: any) {
-      if (err.message.startsWith("Bridge failed")) throw err;
+      data = await resp.json();
+    } catch {
       // Network error — continue polling
+      continue;
+    }
+    if (data.status === "DONE") return data.receiving?.amount ?? "unknown";
+    if (data.status === "FAILED") {
+      throw new Error(`Bridge failed: ${data.substatusMessage ?? "unknown error"}`);
     }
   }
   throw new Error("Bridge timed out after 5 minutes");

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { bridgeUsdc } from "../utilities/bridge.js";
 
 describe("bridgeUsdc validation", () => {
@@ -35,6 +35,10 @@ describe("bridgeUsdc fetch error handling", () => {
     }));
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("throws when Li.Fi quote returns non-OK", async () => {
     const account = { address: "0xABCD" } as any;
     await expect(bridgeUsdc(account, "eip155:8453", "eip155:42161", 1))
@@ -48,6 +52,10 @@ describe("bridgeUsdc missing transactionRequest", () => {
       ok: true,
       json: async () => ({ id: "quote-123" }), // no transactionRequest
     }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("throws when Li.Fi quote has no transactionRequest", async () => {
