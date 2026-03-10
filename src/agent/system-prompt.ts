@@ -216,10 +216,15 @@ Your sandbox ID is ${identity.sandboxId}.`,
     // No upstream data yet — skip
   }
 
+  const isFreeInference = config.inferenceModel?.includes("/");
+  const creditsLine = isFreeInference
+    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (NOT being consumed — inference is FREE via OpenRouter, do NOT buy credits)`
+    : `Credits: $${(financial.creditsCents / 100).toFixed(2)}`;
+
   sections.push(
     `--- CURRENT STATUS ---
 State: ${state}
-Credits: $${(financial.creditsCents / 100).toFixed(2)}
+${creditsLine}
 USDC Balance: ${financial.usdcBalance.toFixed(4)} USDC
 Total turns completed: ${turnCount}
 Recent self-modifications: ${recentMods.length}
@@ -309,12 +314,17 @@ What will you do first? Consider:
 
   const nextSteps = db.getKV("next_steps");
 
+  const isFree = config.inferenceModel?.includes("/");
+  const creditsNote = isFree
+    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (FREE inference — NOT being consumed, ignore credits)`
+    : `Credits: $${(financial.creditsCents / 100).toFixed(2)}`;
+
   return `You are waking up. You last went to sleep after ${turnCount} total turns.
 
-Your credits: $${(financial.creditsCents / 100).toFixed(2)} | USDC: ${financial.usdcBalance.toFixed(4)}
+${creditsNote} | USDC: ${financial.usdcBalance.toFixed(4)}
 ${nextSteps ? `\n📋 Your agenda (written by you before sleeping):\n${nextSteps}\n` : ""}
 Your last few thoughts:
 ${lastTurnSummary || "No previous turns found."}
 
-What triggered this wake-up? Check your credits, heartbeat status, and goals, then decide what to do.`;
+What triggered this wake-up? Check your heartbeat status and goals, then decide what to do.`;
 }

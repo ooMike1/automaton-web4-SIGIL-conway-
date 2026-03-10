@@ -1,456 +1,419 @@
 /**
- * Universal DeFi Arbitrage Engine
- * Self-discovering, multi-DEX, autonomous
- * 
- * Features:
- * - Auto-detects new DEX pools
- * - Validates exchange suitability
- * - Dynamic price comparison
- * - Cross-DEX arbitrage execution
- * - Persistent registry
+ * Universal DeFi Arbitrage Engine v2
+ *
+ * Scanner:   GeckoTerminal API (free, no key needed)
+ * Execution: viem on-chain swaps via Uniswap V3 on Base
+ * Networks:  Base (executable) + Arbitrum (scan-only, no ETH for gas)
+ *
+ * Safety: DRY_RUN=true by default. Set to false only after verifying
+ *         scanner produces correct spreads.
  */
 
-import { createPublicClient, http, Address, getAddress } from 'viem';
-import { arbitrum } from 'viem/chains';
+import {
+  createPublicClient,
+  createWalletClient,
+  http,
+  parseUnits,
+  Address,
+} from 'viem';
+import { base, arbitrum } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 
-interface DEXRegistry {
-    name: string;
-    id: string;
-    type: 'uniswap-v3' | 'uniswap-v2' | 'curve' | 'balancer' | 'camelot' | 'other';
-    routerAddress: Address;
-    factoryAddress: Address;
-    minLiquidity: number; // USD
-    feePercent: number;
-    enabled: boolean;
-    discoveredAt: number;
-    lastValidated: number;
-    totalSwapsExecuted: number;
+// ─── Safety gate ─────────────────────────────────────────────────────────────
+// Change to false only after scanner has been validated with real price data
+const DRY_RUN = true;
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+const NETWORKS: Record<string, {
+  geckoId: string;
+  chain: typeof base | typeof arbitrum;
+  rpcUrl: string;
+  uniV3Router: Address;
+  canExecute: boolean;
+}> = {
+  base: {
+    geckoId: 'base',
+    chain: base,
+    rpcUrl: 'https://mainnet.base.org',
+    uniV3Router: '0x2626664c2603336E57B271c5C0b26F421741e481',
+    canExecute: true,  // ~0.001 ETH on Base for gas
+  },
+  arbitrum: {
+    geckoId: 'arbitrum',
+    chain: arbitrum,
+    rpcUrl: 'https://arb1.arbitrum.io/rpc',
+    uniV3Router: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+    canExecute: false, // ~0.000004 ETH on Arbitrum — not enough
+  },
+};
+
+// Tokens to monitor per network (by address)
+const WATCH_TOKENS: Record<string, Array<{ symbol: string; address: Address; decimals: number }>> = {
+  base: [
+    { symbol: 'WETH',  address: '0x4200000000000000000000000000000000000006', decimals: 18 },
+    { symbol: 'cbBTC', address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8 },
+    { symbol: 'AERO',  address: '0x940181a94A35A4569E4529A3CDfB74e38FD98631', decimals: 18 },
+  ],
+  arbitrum: [
+    { symbol: 'WETH', address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', decimals: 18 },
+    { symbol: 'ARB',  address: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 },
+  ],
+};
+
+const MIN_TVL_USD        = 100_000; // ignore illiquid pools
+const MIN_NET_PROFIT_USD = 0.50;    // min net profit to attempt execution
+const EST_GAS_USD        = 0.15;    // estimated gas cost for 2-swap arb on Base
+const MAX_REALISTIC_SPREAD_PCT = 2.0; // filter out price-direction errors
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface Pool {
+  address: Address;
+  dexId: string;
+  network: string;
+  /** Normalized: always the target token we searched for */
+  baseSymbol: string;
+  quoteSymbol: string;
+  /** USD price of baseSymbol in this pool */
+  priceUsd: number;
+  tvlUsd: number;
+  /** Fee tier as percentage, e.g. 0.05 or 0.3 */
+  feeTier: number;
+  rawName: string;
 }
 
-interface PoolData {
-    dexId: string;
-    address: Address;
-    token0: Address;
-    token1: Address;
-    symbol: string;
-    liquidity: number;
-    price: number;
-    volume24h: number;
-    fee: number;
+interface Opportunity {
+  network: string;
+  tokenSymbol: string;
+  pair: string;
+  buyPool: Pool;
+  sellPool: Pool;
+  spreadPct: number;
+  grossProfitUsd: number;
+  netProfitUsd: number;
+  capitalUsd: number;
+  canExecute: boolean;
+  reason?: string;
 }
 
-interface ArbitrageOpportunity {
-    tokenPair: string;
-    pools: PoolData[];
-    bestBuy: { dex: string; pool: PoolData; price: number };
-    bestSell: { dex: string; pool: PoolData; price: number };
-    spread: number;
-    profitPercent: number;
-    profitUSD: number;
-    estimatedExecutionTime: number;
+// ─── GeckoTerminal Scanner ────────────────────────────────────────────────────
+
+interface GeckoPool {
+  address: Address;
+  dexId: string;
+  rawName: string;
+  basePriceUsd: number;
+  quotePriceUsd: number;
+  tvlUsd: number;
+  feeTier: number;
+  baseSymbolRaw: string; // first symbol in pool name
 }
 
-interface DEXFitness {
-    score: number; // 0-100
-    liquidityOk: boolean;
-    volumeOk: boolean;
-    slippageAcceptable: boolean;
-    issues: string[];
+async function fetchPoolsForToken(geckoNetworkId: string, tokenAddress: string): Promise<GeckoPool[]> {
+  const url = `https://api.geckoterminal.com/api/v2/networks/${geckoNetworkId}/tokens/${tokenAddress}/pools?page=1`;
+  const resp = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!resp.ok) throw new Error(`GeckoTerminal ${resp.status}: ${geckoNetworkId}/${tokenAddress}`);
+
+  const data = await resp.json() as any;
+  const results: GeckoPool[] = [];
+
+  for (const item of (data.data ?? [])) {
+    const attr = item.attributes ?? {};
+    const tvlUsd = parseFloat(attr.reserve_in_usd ?? '0');
+    if (tvlUsd < MIN_TVL_USD) continue;
+
+    const basePriceUsd = parseFloat(attr.base_token_price_usd ?? '0');
+    const quotePriceUsd = parseFloat(attr.quote_token_price_usd ?? '0');
+    if (!basePriceUsd) continue;
+
+    const feeMatch = (attr.name ?? '').match(/([\d.]+)%/);
+    const feeTier = feeMatch ? parseFloat(feeMatch[1]) : 0.3;
+
+    const dexId = item.relationships?.dex?.data?.id ?? 'unknown';
+    const nameparts = (attr.name ?? '').split('/');
+    const baseSymbolRaw = nameparts[0]?.trim().split(' ')[0] ?? '';
+    const poolAddr = (attr.address ?? item.id?.split('_')?.[1] ?? '0x') as Address;
+
+    results.push({ address: poolAddr, dexId, rawName: attr.name ?? '', basePriceUsd, quotePriceUsd, tvlUsd, feeTier, baseSymbolRaw });
+  }
+  return results;
 }
 
 /**
- * DEX Discovery Engine - Auto-finds new DEXs
+ * Get a consistent USD price for `targetSymbol` across pools.
+ * - If target is the BASE token in the pool: use basePriceUsd directly.
+ * - If target is the QUOTE token: use quotePriceUsd.
+ * Pools where target appears in neither position (wrong naming) are skipped.
  */
-class DEXDiscoveryEngine {
-    private knownDEXs: Map<string, DEXRegistry> = new Map([
-        [
-            'uniswap-v3',
-            {
-                name: 'Uniswap V3',
-                id: 'uniswap-v3',
-                type: 'uniswap-v3',
-                routerAddress: '0xE592427A0AEce92De3Edee1F18E0157C05861564' as Address,
-                factoryAddress: '0x1F98431c8aD98523631AE4a59f267346ea3113FF' as Address,
-                minLiquidity: 10000,
-                feePercent: 0.05,
-                enabled: true,
-                discoveredAt: Date.now(),
-                lastValidated: Date.now(),
-                totalSwapsExecuted: 0,
-            },
-        ],
-        [
-            'camelot',
-            {
-                name: 'Camelot',
-                id: 'camelot',
-                type: 'camelot',
-                routerAddress: '0xc873fEcbd354f5A56E00E710B90EF4201db2448d' as Address,
-                factoryAddress: '0x1F1E4446Bd6c1aE0D38489d6109D599136057DA5' as Address,
-                minLiquidity: 5000,
-                feePercent: 0.25,
-                enabled: true,
-                discoveredAt: Date.now(),
-                lastValidated: Date.now(),
-                totalSwapsExecuted: 0,
-            },
-        ],
-        [
-            'balancer',
-            {
-                name: 'Balancer',
-                id: 'balancer',
-                type: 'balancer',
-                routerAddress: '0xBA12222222228d8Ba445958a75a0704d566BF2C8' as Address,
-                factoryAddress: '0x752EbEb183d1b385b970eFb062fe05Df418b3922' as Address,
-                minLiquidity: 15000,
-                feePercent: 0.3,
-                enabled: true,
-                discoveredAt: Date.now(),
-                lastValidated: Date.now(),
-                totalSwapsExecuted: 0,
-            },
-        ],
-    ]);
+function resolveTargetPrice(pool: GeckoPool, targetSymbol: string): number | null {
+  const nameLower = pool.rawName.toLowerCase();
+  const targetLower = targetSymbol.toLowerCase();
 
-    /**
-     * Discover new DEXs via The Graph
-     */
-    async discoverNewDEXs(): Promise<DEXRegistry[]> {
-        const discovered: DEXRegistry[] = [];
+  // Check which side of the "/" the target is on
+  const parts = pool.rawName.split('/');
+  const basePartSymbol = parts[0]?.trim().split(' ')[0]?.toLowerCase() ?? '';
+  const quotePartSymbol = parts[1]?.trim().split(' ')[0]?.toLowerCase() ?? '';
 
-        try {
-            // Query Uniswap V3 subgraph for all pools
-            const query = `
-        {
-          factories(first: 5) {
-            id
-            poolCount
-            txCount
-          }
-          pools(first: 100, orderBy: liquidity, orderDirection: desc) {
-            id
-            token0 {
-              id
-              symbol
-              decimals
-            }
-            token1 {
-              id
-              symbol
-              decimals
-            }
-            liquidity
-            sqrtPrice
-            feeTier
-            volume24h: volumeUSD
-          }
-        }
-      `;
+  if (basePartSymbol === targetLower) {
+    return pool.basePriceUsd;  // target is base → basePriceUsd is the target's USD price
+  } else if (quotePartSymbol === targetLower) {
+    return pool.quotePriceUsd; // target is quote → quotePriceUsd is the target's USD price
+  }
 
-            const resp = await fetch(
-                'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3-arbitrum',
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query }),
-                }
-            );
-
-            const result = await resp.json();
-            console.log(`[ARBITRAGE] Discovered ${result.data?.pools?.length || 0} pools from Uniswap V3`);
-
-            // Could discover other DEXs similarly
-            // For now, using known DEXs as fallback
-        } catch (err) {
-            console.error('[ARBITRAGE] Discovery error:', err);
-        }
-
-        return discovered;
-    }
-
-    /**
-     * Validate DEX fitness for trading
-     */
-    async validateDEXFitness(dex: DEXRegistry): Promise<DEXFitness> {
-        const issues: string[] = [];
-        let score = 100;
-
-        // Check liquidity
-        if (dex.minLiquidity < 5000) {
-            issues.push('Very low minimum liquidity');
-            score -= 20;
-        }
-
-        // Check fees
-        if (dex.feePercent > 0.5) {
-            issues.push('High trading fees');
-            score -= 15;
-        }
-
-        // Check if recently validated
-        const daysSinceValidation = (Date.now() - dex.lastValidated) / (1000 * 60 * 60 * 24);
-        if (daysSinceValidation > 7) {
-            issues.push('Not recently validated');
-            score -= 10;
-        }
-
-        // Recent swap execution indicates health
-        if (dex.totalSwapsExecuted < 1) {
-            issues.push('No recent execution history');
-            score -= 5;
-        }
-
-        return {
-            score: Math.max(0, score),
-            liquidityOk: dex.minLiquidity >= 5000,
-            volumeOk: dex.totalSwapsExecuted > 0,
-            slippageAcceptable: dex.feePercent <= 0.5,
-            issues,
-        };
-    }
-
-    /**
-     * Get all enabled DEXs
-     */
-    getEnabledDEXs(): DEXRegistry[] {
-        return Array.from(this.knownDEXs.values()).filter(d => d.enabled);
-    }
-
-    /**
-     * Register new DEX after validation
-     */
-    async registerDEX(dex: DEXRegistry): Promise<boolean> {
-        const fitness = await this.validateDEXFitness(dex);
-
-        if (fitness.score < 50) {
-            console.log(`[ARBITRAGE] ❌ DEX rejected: ${dex.name} (score: ${fitness.score})`);
-            console.log(`[ARBITRAGE] Issues: ${fitness.issues.join(', ')}`);
-            return false;
-        }
-
-        this.knownDEXs.set(dex.id, dex);
-        console.log(`[ARBITRAGE] ✅ DEX registered: ${dex.name} (score: ${fitness.score})`);
-        return true;
-    }
+  // Can't determine — skip
+  return null;
 }
 
-/**
- * Universal Pool Scanner
- */
-class UniversalPoolScanner {
-    private client = createPublicClient({
-        chain: arbitrum,
-        transport: http('https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq'),
-    });
+async function scanNetworkForOpportunities(
+  networkId: string,
+  capitalUsd: number,
+): Promise<Opportunity[]> {
+  const config = NETWORKS[networkId];
+  const tokens = WATCH_TOKENS[networkId] ?? [];
+  const opportunities: Opportunity[] = [];
 
-    private discovery = new DEXDiscoveryEngine();
-
-    /**
-     * Scan for pools across all DEXs
-     */
-    async scanAllPools(tokenPairs: string[]): Promise<PoolData[]> {
-        const pools: PoolData[] = [];
-        const dexs = this.discovery.getEnabledDEXs();
-
-        for (const dex of dexs) {
-            try {
-                const dexPools = await this.scanDEXPools(dex, tokenPairs);
-                pools.push(...dexPools);
-            } catch (err) {
-                console.error(`[ARBITRAGE] Error scanning ${dex.name}:`, err);
-            }
-        }
-
-        return pools;
-    }
-
-    /**
-     * Scan specific DEX for token pairs
-     */
-    private async scanDEXPools(
-        dex: DEXRegistry,
-        tokenPairs: string[]
-    ): Promise<PoolData[]> {
-        const pools: PoolData[] = [];
-
-        const query = `
-      {
-        pools(first: 50, where: { liquidity_gt: "1000000000000000000" }) {
-          id
-          token0 {
-            id
-            symbol
-            decimals
-          }
-          token1 {
-            id
-            symbol
-            decimals
-          }
-          liquidity
-          sqrtPrice
-          feeTier
-          volumeUSD
-        }
-      }
-    `;
-
-        try {
-            const resp = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3-arbitrum', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query }),
-            });
-
-            const result = await resp.json();
-
-            for (const pool of result.data?.pools || []) {
-                const pair = `${pool.token0.symbol}/${pool.token1.symbol}`;
-
-                if (
-                    tokenPairs.some(
-                        tp => tp.includes(pool.token0.symbol) && tp.includes(pool.token1.symbol)
-                    )
-                ) {
-                    pools.push({
-                        dexId: dex.id,
-                        address: getAddress(pool.id),
-                        token0: getAddress(pool.token0.id),
-                        token1: getAddress(pool.token1.id),
-                        symbol: pair,
-                        liquidity: Number(pool.liquidity),
-                        price: Number(pool.sqrtPrice),
-                        volume24h: Number(pool.volumeUSD),
-                        fee: dex.feePercent,
-                    });
-                }
-            }
-
-            console.log(`[ARBITRAGE] Found ${pools.length} pools on ${dex.name}`);
-        } catch (err) {
-            console.error(`[ARBITRAGE] Error scanning ${dex.name}:`, err);
-        }
-
-        return pools;
-    }
-}
-
-/**
- * Universal Arbitrage Detector
- */
-class UniversalArbitrageDetector {
-    private scanner = new UniversalPoolScanner();
-    private discovery = new DEXDiscoveryEngine();
-
-    /**
-     * Find all arbitrage opportunities
-     */
-    async detectOpportunities(tokenPairs: string[]): Promise<ArbitrageOpportunity[]> {
-        const opportunities: ArbitrageOpportunity[] = [];
-
-        // Discover new DEXs
-        const newDEXs = await this.discovery.discoverNewDEXs();
-        for (const dex of newDEXs) {
-            await this.discovery.registerDEX(dex);
-        }
-
-        // Scan all pools
-        const allPools = await this.scanner.scanAllPools(tokenPairs);
-
-        // Group by token pair
-        const poolsByPair = new Map<string, PoolData[]>();
-        for (const pool of allPools) {
-            if (!poolsByPair.has(pool.symbol)) {
-                poolsByPair.set(pool.symbol, []);
-            }
-            poolsByPair.get(pool.symbol)!.push(pool);
-        }
-
-        // Detect spreads
-        for (const [pair, pools] of poolsByPair.entries()) {
-            if (pools.length < 2) continue;
-
-            // Sort by price
-            const sorted = [...pools].sort((a, b) => a.price - b.price);
-            const bestBuy = sorted[0];
-            const bestSell = sorted[sorted.length - 1];
-
-            const spread = (bestSell.price - bestBuy.price) / bestBuy.price * 100;
-            const feeCost = (bestBuy.fee + bestSell.fee) * 100;
-            const profitPercent = spread - feeCost - 0.5; // slippage buffer
-
-            if (profitPercent > 0.5) {
-                opportunities.push({
-                    tokenPair: pair,
-                    pools,
-                    bestBuy: { dex: bestBuy.dexId, pool: bestBuy, price: bestBuy.price },
-                    bestSell: { dex: bestSell.dexId, pool: bestSell, price: bestSell.price },
-                    spread,
-                    profitPercent,
-                    profitUSD: profitPercent * bestBuy.price / 100, // Per 1 unit
-                    estimatedExecutionTime: 45000, // 45 seconds
-                });
-            }
-        }
-
-        return opportunities;
-    }
-
-    /**
-     * Execute multi-DEX arbitrage
-     */
-    async executeOpportunity(opp: ArbitrageOpportunity): Promise<boolean> {
-        console.log(
-            `[ARBITRAGE] 🚀 Executing: ${opp.tokenPair}`
-        );
-        console.log(
-            `[ARBITRAGE]    Buy @ ${opp.bestBuy.dex}: $${opp.bestBuy.price.toFixed(6)}`
-        );
-        console.log(
-            `[ARBITRAGE]    Sell @ ${opp.bestSell.dex}: $${opp.bestSell.price.toFixed(6)}`
-        );
-        console.log(
-            `[ARBITRAGE]    Profit: ${opp.profitPercent.toFixed(3)}% ($${opp.profitUSD.toFixed(2)})`
-        );
-
-        // In production: execute swaps, track gas, adjust strategy
-        return true;
-    }
-}
-
-// Export main interface
-export const arbitrageEngine = new UniversalArbitrageDetector();
-
-export async function executeUniversalArbitrage(): Promise<string> {
+  for (const token of tokens) {
     try {
-        console.log('[ARBITRAGE] Starting universal arbitrage scan...');
+      await new Promise(r => setTimeout(r, 500)); // rate limit: 30 req/min free
+      const rawPools = await fetchPoolsForToken(config.geckoId, token.address);
 
-        const opportunities = await arbitrageEngine.detectOpportunities([
-            'ETH/USDC',
-            'ARB/USDC',
-            'GMX/USDC',
-            'USDC/USDT',
-        ]);
+      // Build normalized pool list: each entry has a consistent USD price for `token`
+      const normalizedPools: Pool[] = [];
+      for (const rp of rawPools) {
+        const priceUsd = resolveTargetPrice(rp, token.symbol);
+        if (priceUsd === null || priceUsd <= 0) continue;
 
-        if (opportunities.length === 0) {
-            return '📊 No profitable opportunities detected';
-        }
+        // Determine quote symbol (the other token in the pair)
+        const parts = rp.rawName.split('/');
+        const basePartSymbol = parts[0]?.trim().split(' ')[0] ?? '';
+        const quotePartSymbol = parts[1]?.trim().split(' ')[0] ?? '';
+        const quoteSymbol = basePartSymbol.toLowerCase() === token.symbol.toLowerCase()
+          ? quotePartSymbol
+          : basePartSymbol;
 
-        console.log(`[ARBITRAGE] Found ${opportunities.length} opportunity(ies)`);
+        normalizedPools.push({
+          address: rp.address,
+          dexId: rp.dexId,
+          network: networkId,
+          baseSymbol: token.symbol,
+          quoteSymbol,
+          priceUsd,
+          tvlUsd: rp.tvlUsd,
+          feeTier: rp.feeTier,
+          rawName: rp.rawName,
+        });
+      }
 
-        for (const opp of opportunities) {
-            if (opp.profitUSD >= 10) {
-                // Only execute if profit > $10
-                await arbitrageEngine.executeOpportunity(opp);
-            }
-        }
+      console.log(`[ARBITRAGE] ${networkId}/${token.symbol}: ${normalizedPools.length} pools (min TVL $${MIN_TVL_USD/1000}k)`);
 
-        return `🎯 ${opportunities.length} opportunity(ies) analyzed, executing top prospects`;
+      // Group by quote token so we compare like-for-like
+      const byQuote = new Map<string, Pool[]>();
+      for (const p of normalizedPools) {
+        const k = p.quoteSymbol.toLowerCase();
+        if (!byQuote.has(k)) byQuote.set(k, []);
+        byQuote.get(k)!.push(p);
+      }
+
+      for (const [, poolGroup] of byQuote) {
+        if (poolGroup.length < 2) continue;
+
+        const sorted = [...poolGroup].sort((a, b) => a.priceUsd - b.priceUsd);
+        const cheapest = sorted[0];
+        const priciest = sorted[sorted.length - 1];
+
+        const spreadPct = (priciest.priceUsd - cheapest.priceUsd) / cheapest.priceUsd * 100;
+
+        // Sanity check: reject implausibly large spreads (price-direction artifact)
+        if (spreadPct > MAX_REALISTIC_SPREAD_PCT) continue;
+        if (spreadPct < 0.05) continue; // below noise floor
+
+        const totalFeePct = cheapest.feeTier + priciest.feeTier;
+        const grossProfitUsd = (spreadPct / 100) * capitalUsd;
+        const feeCostUsd = (totalFeePct / 100) * capitalUsd;
+        const netProfitUsd = grossProfitUsd - feeCostUsd - EST_GAS_USD;
+
+        const executableOnNetwork = config.canExecute;
+        let canExecute = !DRY_RUN && executableOnNetwork && netProfitUsd > MIN_NET_PROFIT_USD;
+        let reason: string | undefined;
+
+        if (DRY_RUN) reason = 'dry_run mode';
+        else if (!executableOnNetwork) reason = 'no gas on this network';
+        else if (netProfitUsd <= MIN_NET_PROFIT_USD) reason = `net $${netProfitUsd.toFixed(4)} < min $${MIN_NET_PROFIT_USD}`;
+
+        opportunities.push({
+          network: networkId,
+          tokenSymbol: token.symbol,
+          pair: `${token.symbol}/${priciest.quoteSymbol}`,
+          buyPool: cheapest,
+          sellPool: priciest,
+          spreadPct,
+          grossProfitUsd,
+          netProfitUsd,
+          capitalUsd,
+          canExecute,
+          reason,
+        });
+      }
     } catch (err: any) {
-        console.error('[ARBITRAGE] Fatal error:', err.message);
-        return `❌ Error: ${err.message}`;
+      console.error(`[ARBITRAGE] Error scanning ${networkId}/${token.symbol}: ${err.message}`);
     }
+  }
+
+  return opportunities.sort((a, b) => b.netProfitUsd - a.netProfitUsd);
+}
+
+// ─── Execution (Uniswap V3 only, Base) ───────────────────────────────────────
+
+const ERC20_APPROVE_ABI = [{
+  name: 'approve', type: 'function',
+  inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }],
+  outputs: [{ name: '', type: 'bool' }],
+  stateMutability: 'nonpayable',
+}] as const;
+
+const SWAP_ROUTER_ABI = [{
+  name: 'exactInputSingle', type: 'function',
+  inputs: [{ name: 'params', type: 'tuple', components: [
+    { name: 'tokenIn',            type: 'address' },
+    { name: 'tokenOut',           type: 'address' },
+    { name: 'fee',                type: 'uint24'  },
+    { name: 'recipient',          type: 'address' },
+    { name: 'amountIn',           type: 'uint256' },
+    { name: 'amountOutMinimum',   type: 'uint256' },
+    { name: 'sqrtPriceLimitX96',  type: 'uint256' },
+  ]}],
+  outputs: [{ name: 'amountOut', type: 'uint256' }],
+  stateMutability: 'payable',
+}] as const;
+
+function feePctToUint24(pct: number): number {
+  const map: Record<number, number> = { 0.01: 100, 0.05: 500, 0.3: 3000, 1: 10000 };
+  return map[pct] ?? 3000;
+}
+
+async function executeSwapPair(opp: Opportunity): Promise<string> {
+  const netConfig = NETWORKS[opp.network];
+
+  const walletPath = join(homedir(), '.automaton', 'wallet.json');
+  const walletData = JSON.parse(readFileSync(walletPath, 'utf-8'));
+  const account = privateKeyToAccount(walletData.privateKey as `0x${string}`);
+
+  const publicClient  = createPublicClient({ chain: netConfig.chain, transport: http(netConfig.rpcUrl) });
+  const walletClient  = createWalletClient({ account, chain: netConfig.chain, transport: http(netConfig.rpcUrl) });
+
+  const tokens = WATCH_TOKENS[opp.network] ?? [];
+  const tokenIn  = tokens.find(t => t.symbol === opp.tokenSymbol);
+  const tokenOut = tokens.find(t => t.symbol === opp.buyPool.quoteSymbol);
+  if (!tokenIn || !tokenOut) return `❌ token config missing for ${opp.pair}`;
+
+  // Use 90% of capital, leave 10% buffer
+  const amountInUnits = parseUnits(
+    (opp.capitalUsd * 0.9 / opp.buyPool.priceUsd).toFixed(tokenIn.decimals),
+    tokenIn.decimals,
+  );
+  const minOut = amountInUnits * BigInt(9800) / BigInt(10000); // 2% slippage
+
+  console.log(`[ARBITRAGE] 🚀 Executing ${opp.pair}: buy on ${opp.buyPool.dexId} @ $${opp.buyPool.priceUsd.toFixed(4)}, sell on ${opp.sellPool.dexId} @ $${opp.sellPool.priceUsd.toFixed(4)}`);
+
+  // 1. Approve tokenIn
+  const approveTx = await walletClient.writeContract({
+    address: tokenIn.address,
+    abi: ERC20_APPROVE_ABI,
+    functionName: 'approve',
+    args: [netConfig.uniV3Router, amountInUnits],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: approveTx });
+
+  // 2. Swap tokenIn → tokenOut on cheaper pool
+  const swap1 = await walletClient.writeContract({
+    address: netConfig.uniV3Router,
+    abi: SWAP_ROUTER_ABI,
+    functionName: 'exactInputSingle',
+    args: [{
+      tokenIn: tokenIn.address,
+      tokenOut: tokenOut.address,
+      fee: feePctToUint24(opp.buyPool.feeTier),
+      recipient: account.address,
+      amountIn: amountInUnits,
+      amountOutMinimum: minOut,
+      sqrtPriceLimitX96: BigInt(0),
+    }],
+  });
+  const r1 = await publicClient.waitForTransactionReceipt({ hash: swap1 });
+
+  // 3. Approve tokenOut
+  const approve2 = await walletClient.writeContract({
+    address: tokenOut.address,
+    abi: ERC20_APPROVE_ABI,
+    functionName: 'approve',
+    args: [netConfig.uniV3Router, minOut],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: approve2 });
+
+  // 4. Swap tokenOut → tokenIn on more expensive pool
+  const swap2 = await walletClient.writeContract({
+    address: netConfig.uniV3Router,
+    abi: SWAP_ROUTER_ABI,
+    functionName: 'exactInputSingle',
+    args: [{
+      tokenIn: tokenOut.address,
+      tokenOut: tokenIn.address,
+      fee: feePctToUint24(opp.sellPool.feeTier),
+      recipient: account.address,
+      amountIn: minOut,
+      amountOutMinimum: amountInUnits * BigInt(9950) / BigInt(10000),
+      sqrtPriceLimitX96: BigInt(0),
+    }],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: swap2 });
+
+  return `✅ Arbitrage done: ${opp.pair} | gas used: ${r1.gasUsed} | tx: ${swap2}`;
+}
+
+// ─── Main Entry Point ─────────────────────────────────────────────────────────
+
+export async function executeUniversalArbitrage(capitalUsd = 4.0): Promise<string> {
+  console.log('[ARBITRAGE] Starting universal arbitrage scan...');
+
+  const lines: string[] = [];
+  const allOpps: Opportunity[] = [];
+
+  for (const networkId of Object.keys(NETWORKS)) {
+    const opps = await scanNetworkForOpportunities(networkId, capitalUsd);
+    allOpps.push(...opps);
+
+    if (opps.length > 0) {
+      lines.push(`📊 ${networkId}: ${opps.length} spread(s)`);
+      for (const opp of opps.slice(0, 4)) {
+        lines.push(
+          `  ${opp.pair} | buy ${opp.buyPool.dexId} $${opp.buyPool.priceUsd.toFixed(4)} → sell ${opp.sellPool.dexId} $${opp.sellPool.priceUsd.toFixed(4)} | spread ${opp.spreadPct.toFixed(3)}% | net $${opp.netProfitUsd.toFixed(4)} | ${opp.canExecute ? '🚀 executing' : '⏸ ' + opp.reason}`
+        );
+      }
+    } else {
+      lines.push(`📊 ${networkId}: no spreads detected above noise floor`);
+    }
+  }
+
+  // Execute best if eligible
+  const executable = allOpps.filter(o => o.canExecute);
+  if (executable.length > 0) {
+    const best = executable[0];
+    lines.push(`\n🎯 Best opportunity: ${best.pair} | net profit $${best.netProfitUsd.toFixed(4)}`);
+    try {
+      const result = await executeSwapPair(best);
+      lines.push(result);
+    } catch (err: any) {
+      lines.push(`❌ Execution error: ${err.message?.substring(0, 150)}`);
+    }
+  } else if (DRY_RUN) {
+    lines.push(`\n⚠️  DRY_RUN=true — no execution. Verify spreads are accurate before enabling.`);
+  }
+
+  return lines.join('\n');
 }
 
 export default executeUniversalArbitrage;
