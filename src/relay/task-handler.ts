@@ -3,10 +3,10 @@
  */
 import { createPublicClient, createWalletClient, http } from "viem";
 import type { Address, PrivateKeyAccount } from "viem";
-import { base } from "viem/chains";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type Database from "better-sqlite3";
+import { CHAINS, USDC_ADDRESSES, RPC_URLS, getUsdcBalance } from "../conway/x402.js";
 
 export function initPricingSchema(db: InstanceType<typeof Database>): void {
   db.prepare(`
@@ -104,8 +104,6 @@ export function startPricingEngine(db: InstanceType<typeof Database>): () => voi
   return () => clearInterval(handle);
 }
 
-const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
-
 // ─── 402 Response Builder ──────────────────────────────────────
 interface PaymentRequiredBody {
   accepts: Array<{
@@ -119,22 +117,38 @@ interface PaymentRequiredBody {
   }>;
 }
 
-export function buildPaymentRequired(
+export async function buildPaymentRequired(
   taskType: string,
   payToAddress: Address,
   db: InstanceType<typeof Database>,
-): PaymentRequiredBody {
+): Promise<PaymentRequiredBody> {
   const amount = getCurrentPricing(db, taskType);
+
+  const supportedNetworks = ["eip155:8453", "eip155:42161", "eip155:1", "eip155:137"];
+
+  const balances = await Promise.all(
+    supportedNetworks.map(async (network) => {
+      try {
+        const bal = await getUsdcBalance(payToAddress, network);
+        return bal > 0 ? network : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const fundedNetworks = balances.filter(Boolean) as string[];
+  const activeNetworks = fundedNetworks.length > 0 ? fundedNetworks : ["eip155:8453"];
+
   return {
-    accepts: [{
+    accepts: activeNetworks.map((network) => ({
       scheme: "exact",
-      network: "eip155:8453",
+      network,
       maxAmountRequired: amount.toString(),
       payToAddress,
-      asset: USDC_BASE,
+      asset: USDC_ADDRESSES[network] as Address,
       maxTimeoutSeconds: 300,
       resource: "POST /v1/tasks",
-    }],
+    })),
   };
 }
 
@@ -156,8 +170,6 @@ const TRANSFER_WITH_AUTH_ABI = [{
   ],
   outputs: [],
 }] as const;
-
-const BASE_RPC = "https://mainnet.base.org";
 
 // In-process nonce cache — prevents replay of same payment within server lifetime
 const _usedNonces = new Set<string>();
@@ -215,11 +227,16 @@ export async function verifyAndSettlePayment(
   const v = parseInt(hex.slice(128, 130), 16);
 
   try {
-    const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });
-    const publicClient = createPublicClient({ chain: base, transport: http(BASE_RPC) });
+    const network     = payment.network ?? "eip155:8453";
+    const chain       = CHAINS[network]          ?? CHAINS["eip155:8453"];
+    const rpcUrl      = RPC_URLS[network]        ?? RPC_URLS["eip155:8453"];
+    const usdcAddress = (USDC_ADDRESSES[network] ?? USDC_ADDRESSES["eip155:8453"]) as Address;
+
+    const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
+    const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
 
     const hash = await walletClient.writeContract({
-      address: USDC_BASE,
+      address: usdcAddress,
       abi: TRANSFER_WITH_AUTH_ABI,
       functionName: "transferWithAuthorization",
       args: [
@@ -231,7 +248,7 @@ export async function verifyAndSettlePayment(
         auth.nonce as `0x${string}`,
         v, r, s,
       ],
-      chain: base,
+      chain,
     });
     await publicClient.waitForTransactionReceipt({ hash });
     _usedNonces.add(nonceKey);

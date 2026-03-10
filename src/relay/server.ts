@@ -226,7 +226,7 @@ export function startLocalRelay(options: RelayOptions): http.Server {
       if (!xPayment) {
         const currentPrice = getCurrentPricing(db, type);
         recordPricingEvent(db, type, "402", currentPrice);
-        const req402 = buildPaymentRequired(type, account.address, db);
+        const req402 = await buildPaymentRequired(type, account.address, db);
         res.writeHead(402, {
           "Content-Type": "application/json",
           "X-Payment-Required": Buffer.from(JSON.stringify(req402)).toString("base64"),
