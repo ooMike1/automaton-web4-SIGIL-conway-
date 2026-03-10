@@ -100,7 +100,7 @@ export async function swapTokens(
       functionName: "decimals",
     });
   }
-  const amountAtomic = parseUnits(String(amountIn), decimals);
+  const amountAtomic = parseUnits(amountIn.toFixed(decimals), decimals);
 
   // Fetch Li.Fi quote (fromChain === toChain = same-chain swap)
   const quoteUrl =
