@@ -78,7 +78,7 @@ export function createInferenceClient(
 
     // Auto-route Groq models to api.groq.com if a Groq key is configured
     const useGroq = isGroqModel(model) && !!options.groqApiKey;
-    const effectiveUrl = useGroq ? "https://api.groq.com" : apiUrl;
+    const effectiveUrl = useGroq ? "https://api.groq.com/openai" : apiUrl;
 
     const isLocal = effectiveUrl.includes("localhost") || effectiveUrl.includes("127.0.0.1") || effectiveUrl.includes("192.168.");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
