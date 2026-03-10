@@ -1626,6 +1626,53 @@ Model: ${ctx.inference.getDefaultModel()}
         }
       },
     },
+    // ── Swap Tool ──
+    {
+      name: "swap_tokens",
+      description:
+        "Swap tokens on the same EVM chain via Li.Fi (e.g. ETH → USDC). " +
+        "Use to rebalance holdings for survival when USDC is short. " +
+        "fromToken: 'native' for ETH, or checksummed ERC-20 address. " +
+        "toToken: 'native' for ETH, or checksummed ERC-20 address. " +
+        "Supported chains: eip155:1, eip155:137, eip155:42161, eip155:8453.",
+      category: "financial",
+      parameters: {
+        type: "object",
+        properties: {
+          chain: {
+            type: "string",
+            description: "CAIP-2 chain ID (e.g. 'eip155:8453' for Base)",
+          },
+          fromToken: {
+            type: "string",
+            description: "'native' for ETH/gas token, or checksummed ERC-20 address",
+          },
+          toToken: {
+            type: "string",
+            description: "'native' for ETH/gas token, or checksummed ERC-20 address",
+          },
+          amountIn: {
+            type: "number",
+            description: "Human-readable input amount (e.g. 0.005 for 0.005 ETH, 1.5 for 1.5 USDC)",
+          },
+        },
+        required: ["chain", "fromToken", "toToken", "amountIn"],
+      },
+      execute: async (args, ctx) => {
+        const { swapTokens } = await import("../utilities/swap.js");
+        const chain     = args.chain     as string;
+        const fromToken = args.fromToken as string;
+        const toToken   = args.toToken   as string;
+        const amountIn  = args.amountIn  as number;
+        console.log(`[swap_tokens] Swapping ${amountIn} ${fromToken} → ${toToken} on ${chain}...`);
+        try {
+          const result = await swapTokens(ctx.identity.account, chain, fromToken, toToken, amountIn);
+          return `✅ Swap complete. txHash: ${result.txHash}. Received: ${result.toAmount} (atomic units).`;
+        } catch (err: any) {
+          return `❌ Swap failed: ${err.message}`;
+        }
+      },
+    },
   ];
 }
 
