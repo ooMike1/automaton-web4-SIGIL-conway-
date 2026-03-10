@@ -151,6 +151,11 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
 
     // If we have USDC but low credits, wake up to potentially convert
     // Cooldown: only wake once per 10 minutes to avoid rapid-loop burning credits
+    // Skip entirely when inference is free (OpenRouter model with "/")
+    const isFreeInference = ctx.config.inferenceModel?.includes("/");
+    if (isFreeInference) {
+      return { shouldWake: false };
+    }
     const credits = await ctx.conway.getCreditsBalance();
     if (balance > 0.5 && credits < 500) {
       const lastWake = ctx.db.getKV("last_buy_credits_wake");

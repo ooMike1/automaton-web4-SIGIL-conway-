@@ -221,6 +221,43 @@ Your sandbox ID is ${identity.sandboxId}.`,
     ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (NOT being consumed — inference is FREE via OpenRouter, do NOT buy credits)`
     : `Credits: $${(financial.creditsCents / 100).toFixed(2)}`;
 
+  // Build strategy intelligence from KV store
+  const strategyLines: string[] = [];
+
+  // Arbitrage
+  try {
+    const raw = db.getKV("last_universal_arbitrage");
+    if (raw) {
+      const arb = JSON.parse(raw);
+      const age = arb.scanTime
+        ? `${Math.round((Date.now() - new Date(arb.scanTime).getTime()) / 60_000)}m ago`
+        : "unknown";
+      // Extract first meaningful line from result (skip blank/header lines)
+      const firstLine = (arb.result || "").split("\n").find((l: string) => l.trim().length > 5) || arb.result;
+      strategyLines.push(`Arbitrage (${age}): ${firstLine?.substring(0, 120)}`);
+    }
+  } catch {}
+
+  // Active income strategy and KPIs
+  const activeStrategy = db.getKV("active_income_strategy");
+  const totalCapital = db.getKV("total_capital");
+  const lastIncomeAction = db.getKV("last_income_action");
+  const defiCapital = db.getKV("defi_capital");
+  if (activeStrategy) strategyLines.push(`Active strategy: ${activeStrategy}`);
+  if (totalCapital) strategyLines.push(`Total capital tracked: ${totalCapital}`);
+  if (defiCapital) strategyLines.push(`DeFi capital deployed: ${defiCapital}`);
+  if (lastIncomeAction) strategyLines.push(`Last income action: ${lastIncomeAction}`);
+
+  // x402 service income
+  try {
+    const x402 = db.getKV("x402_income_total");
+    if (x402) strategyLines.push(`x402 income total: ${x402}`);
+  } catch {}
+
+  const strategyBlock = strategyLines.length > 0
+    ? `\n--- STRATEGY INTEL ---\n${strategyLines.join("\n")}\n--- END STRATEGY INTEL ---`
+    : "";
+
   sections.push(
     `--- CURRENT STATUS ---
 State: ${state}
@@ -231,7 +268,7 @@ Recent self-modifications: ${recentMods.length}
 Inference model: ${config.inferenceModel}
 ERC-8004 Agent ID: ${registryEntry?.agentId || "not registered"}
 Children: ${children.filter((c) => c.status !== "dead").length} alive / ${children.length} total
-Lineage: ${lineageSummary}${upstreamLine}
+Lineage: ${lineageSummary}${upstreamLine}${strategyBlock}
 --- END STATUS ---`,
   );
 

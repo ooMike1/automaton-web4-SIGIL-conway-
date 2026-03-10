@@ -156,7 +156,7 @@ export function createInferenceClient(
       totalTokens: data.usage?.total_tokens || 0,
     };
 
-    const toolCalls: InferenceToolCall[] | undefined =
+    let toolCalls: InferenceToolCall[] | undefined =
       message.tool_calls?.map((tc: any) => ({
         id: tc.id,
         type: "function" as const,
@@ -168,6 +168,15 @@ export function createInferenceClient(
 
     // Reasoning models (e.g. arcee-ai/trinity-mini) return content=null and text in reasoning field
     const textContent = message.content || message.reasoning || "";
+
+    // Some reasoning models embed tool calls as <tool_call> XML in text output.
+    // Extract and promote them to real tool_calls if the API returned none.
+    if ((!toolCalls || toolCalls.length === 0) && textContent) {
+      const xmlToolCalls = parseXmlToolCalls(textContent);
+      if (xmlToolCalls.length > 0) {
+        toolCalls = xmlToolCalls;
+      }
+    }
 
     return {
       id: data.id || "",
@@ -202,6 +211,37 @@ export function createInferenceClient(
     setLowComputeMode,
     getDefaultModel,
   };
+}
+
+/**
+ * Extract tool calls embedded as XML by reasoning models like arcee-ai/trinity-mini.
+ * These models output tool calls inside the text rather than via the function-calling API.
+ */
+function parseXmlToolCalls(text: string): InferenceToolCall[] {
+  const results: InferenceToolCall[] = [];
+  const pattern = /<tool_call>([\s\S]*?)<\/tool_call>/g;
+  const matches = [...text.matchAll(pattern)];
+  let idx = 0;
+  for (const m of matches) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      const fnName: string = parsed.name || parsed.function || "";
+      const args = parsed.arguments ?? parsed.parameters ?? {};
+      if (fnName) {
+        results.push({
+          id: `xml_tc_${idx++}`,
+          type: "function" as const,
+          function: {
+            name: fnName,
+            arguments: typeof args === "string" ? args : JSON.stringify(args),
+          },
+        });
+      }
+    } catch {
+      // Malformed JSON inside tag — skip
+    }
+  }
+  return results;
 }
 
 function formatMessage(
