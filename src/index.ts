@@ -221,6 +221,7 @@ async function run(): Promise<void> {
         name: "tasks",
         endpoint: `${config.relayPublicUrl}/v1/tasks`,
         pricing: { shell: "0.01 USDC", inference: "0.05 USDC" },
+        networks: ["eip155:1", "eip155:137", "eip155:42161", "eip155:8453"],
       };
       const tasksIdx = card.services?.findIndex((s: any) => s.name === "tasks");
       if (tasksIdx >= 0) {
@@ -229,6 +230,13 @@ async function run(): Promise<void> {
         card.services = (card.services ?? []);
         card.services.push(tasksEndpoint);
       }
+      // Update capabilities for multi-chain support
+      card.capabilities = [
+        "evm:eip155:1",
+        "evm:eip155:137",
+        "evm:eip155:42161",
+        "evm:eip155:8453",
+      ];
       writeFileSync(agentCardPath, JSON.stringify(card, null, 2));
       console.log(`[RELAY] agent-card.json actualizado con relay: ${config.relayPublicUrl}`);
     } catch {
@@ -238,11 +246,22 @@ async function run(): Promise<void> {
         type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
         name: config.name,
         description: `Autonomous agent. Creator: ${config.creatorAddress}.`,
+        capabilities: [
+          "evm:eip155:1",
+          "evm:eip155:137",
+          "evm:eip155:42161",
+          "evm:eip155:8453",
+        ],
         services: [
           { name: "relay", endpoint: config.relayPublicUrl },
           { name: "agentWallet", endpoint: `eip155:8453:${account.address}` },
           { name: "conway", endpoint: config.conwayApiUrl },
-          { name: "tasks", endpoint: `${config.relayPublicUrl}/v1/tasks`, pricing: { shell: "0.01 USDC", inference: "0.05 USDC" } },
+          {
+            name: "tasks",
+            endpoint: `${config.relayPublicUrl}/v1/tasks`,
+            pricing: { shell: "0.01 USDC", inference: "0.05 USDC" },
+            networks: ["eip155:1", "eip155:137", "eip155:42161", "eip155:8453"],
+          },
         ],
         x402Support: true,
         active: true,

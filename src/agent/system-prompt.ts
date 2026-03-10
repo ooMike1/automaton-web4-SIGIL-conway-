@@ -89,7 +89,7 @@ const OPERATIONAL_CONTEXT = `You operate inside a Linux VM (Conway sandbox). You
 - Access Conway Compute API directly for sandbox lifecycle (create, run, expose, delete)
 - Use Conway Terminal workflows when conway-terminal is installed in your environment
 - Create additional sandboxes for sub-tasks
-- Make USDC payments via x402 protocol
+- Make and accept USDC payments via x402 protocol on any major EVM chain (Ethereum eip155:1, Polygon eip155:137, Arbitrum eip155:42161, Base eip155:8453)
 - Register and manage domain names
 - Install tools and MCP servers
 - Modify your own heartbeat schedule
@@ -264,6 +264,12 @@ function loadSoulMd(): string | null {
   }
   return null;
 }
+
+/**
+ * Exported for testing — the multi-chain mention in OPERATIONAL_CONTEXT.
+ * Do not use directly; buildSystemPrompt includes it automatically.
+ */
+export const OPERATIONAL_CONTEXT_MULTICHAIN = OPERATIONAL_CONTEXT;
 
 /**
  * Build the wakeup prompt -- the first thing the automaton sees.
