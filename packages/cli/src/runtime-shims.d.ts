@@ -49,6 +49,7 @@ declare module "@conway/automaton/state/database.js" {
     getInstalledTools(): CliInstalledTool[];
     getHeartbeatEntries(): CliHeartbeatEntry[];
     getRecentTurns(limit: number): CliTurn[];
+    getKV(key: string): string | undefined;
     close(): void;
   }
 

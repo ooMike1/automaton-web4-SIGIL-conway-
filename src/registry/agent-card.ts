@@ -25,6 +25,7 @@ export function generateAgentCard(
   identity: AutomatonIdentity,
   config: AutomatonConfig,
   db: AutomatonDatabase,
+  relayPublicUrl?: string,
 ): AgentCard {
   const services: AgentService[] = [
     {
@@ -42,6 +43,14 @@ export function generateAgentCard(
     services.push({
       name: "sandbox",
       endpoint: `https://${identity.sandboxId}.life.conway.tech`,
+    });
+  }
+
+  // Publicar relay si está en modo red
+  if (relayPublicUrl ?? config.relayPublicUrl) {
+    services.push({
+      name: "socialRelay",
+      endpoint: relayPublicUrl ?? config.relayPublicUrl!,
     });
   }
 

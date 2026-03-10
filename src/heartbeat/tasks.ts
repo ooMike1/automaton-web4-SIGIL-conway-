@@ -177,7 +177,14 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     if (!ctx.social) return { shouldWake: false };
 
     const cursor = ctx.db.getKV("social_inbox_cursor") || undefined;
-    const { messages, nextCursor } = await ctx.social.poll(cursor);
+    let messages: Awaited<ReturnType<typeof ctx.social.poll>>["messages"];
+    let nextCursor: string | undefined;
+    try {
+      ({ messages, nextCursor } = await ctx.social.poll(cursor));
+    } catch {
+      // Relay unreachable — stay asleep until it comes back
+      return { shouldWake: false };
+    }
 
     if (messages.length === 0) return { shouldWake: false };
 

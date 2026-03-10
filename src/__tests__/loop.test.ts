@@ -152,7 +152,7 @@ describe("Agent Loop", () => {
     expect(db.getAgentState()).toBe("sleeping");
   });
 
-  it("inbox messages cause pendingInput injection", async () => {
+  it("inbox messages are folded into the wakeup prompt", async () => {
     // Insert an inbox message before running the loop
     db.insertInboxMessage({
       id: "test-msg-1",
@@ -164,12 +164,10 @@ describe("Agent Loop", () => {
     });
 
     const inference = new MockInferenceClient([
-      // First response: wakeup prompt
+      // First response: wakeup prompt (inbox message is folded in, source = "wakeup")
       toolCallResponse([
         { name: "exec", arguments: { command: "echo awake" } },
       ]),
-      // Second response: inbox message (after wakeup turn, pendingInput is cleared,
-      // then inbox messages are picked up on the next iteration)
       noToolResponse("Received the message."),
     ]);
 
@@ -184,11 +182,11 @@ describe("Agent Loop", () => {
       onTurnComplete: (turn) => turns.push(turn),
     });
 
-    // One of the turns should have input from the inbox message
+    // The inbox message is appended to the wakeup prompt, so it appears in the wakeup turn
     const inboxTurn = turns.find(
       (t) => t.input?.includes("Hello from another agent!"),
     );
     expect(inboxTurn).toBeDefined();
-    expect(inboxTurn!.inputSource).toBe("agent");
+    expect(inboxTurn!.inputSource).toBe("wakeup");
   });
 });

@@ -53,7 +53,7 @@ const IDENTITY_ABI = parseAbi([
 
 const REPUTATION_ABI = parseAbi([
   "function leaveFeedback(uint256 agentId, uint8 score, string comment) external",
-  "function getFeedback(uint256 agentId) external view returns (tuple(address from, uint8 score, string comment, uint256 timestamp)[])",
+  "function getFeedback(uint256 agentId) external view returns ((address,uint8,string,uint256)[])",
 ]);
 
 type Network = "mainnet" | "testnet";

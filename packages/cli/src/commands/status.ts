@@ -22,6 +22,25 @@ const tools = db.getInstalledTools();
 const heartbeats = db.getHeartbeatEntries();
 const recentTurns = db.getRecentTurns(5);
 
+let relayStatus: string;
+if (!config.socialRelayUrl) {
+  relayStatus = "no configurado";
+} else {
+  const lastError = db.getKV("last_social_inbox_error");
+  if (lastError) {
+    try {
+      const err = JSON.parse(lastError) as { message: string; timestamp: string };
+      const agoMs = Date.now() - new Date(err.timestamp).getTime();
+      const agoMin = Math.round(agoMs / 60000);
+      relayStatus = `${config.socialRelayUrl} [error hace ${agoMin}m: ${err.message}]`;
+    } catch {
+      relayStatus = `${config.socialRelayUrl} [error desconocido]`;
+    }
+  } else {
+    relayStatus = `${config.socialRelayUrl} [ok]`;
+  }
+}
+
 console.log(`
 === ${config.name} ===
 Address:    ${config.walletAddress}
@@ -32,6 +51,7 @@ Turns:      ${turnCount}
 Tools:      ${tools.length} installed
 Heartbeats: ${heartbeats.filter((h) => h.enabled).length} active
 Model:      ${config.inferenceModel}
+Relay:      ${relayStatus}
 `);
 
 if (recentTurns.length > 0) {
