@@ -449,12 +449,44 @@ async function attemptSelfFunding(
 ): Promise<boolean> {
   try {
     const { x402Fetch, getUsdcBalance } = await import("../conway/x402.js");
-    const baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
+    let baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
     // Allow purchase attempt if balance is close to $5 (RPC may round; actual transfer will fail safely if insufficient)
     if (baseUsdc < 4.9) {
-      const arbUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:42161");
-      console.log(`[FUND] Insufficient Base USDC: ${baseUsdc.toFixed(4)}. Arbitrum: ${arbUsdc.toFixed(4)}.`);
-      return false;
+      // Try swapping ETH → USDC on Base to cover the shortfall
+      console.log(`[FUND] Base USDC low (${baseUsdc.toFixed(4)}). Checking ETH balance for swap...`);
+      try {
+        const { createPublicClient, http } = await import("viem");
+        const { base } = await import("viem/chains");
+        const { swapTokens } = await import("../utilities/swap.js");
+        const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+        const pc = createPublicClient({ chain: base, transport: http("https://base.drpc.org") });
+        const ethWei = await pc.getBalance({ address: identity.address as `0x${string}` });
+        const ethBalance = Number(ethWei) / 1e18;
+
+        // Require at least 0.015 ETH: 0.01 reserve for gas + 0.005 to swap
+        if (ethBalance < 0.015) {
+          const arbUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:42161");
+          console.log(`[FUND] Insufficient funds. Base USDC: ${baseUsdc.toFixed(4)}, ETH: ${ethBalance.toFixed(6)}, Arb USDC: ${arbUsdc.toFixed(4)}.`);
+          return false;
+        }
+
+        // Swap 0.005 ETH → USDC. At $2000+/ETH this yields ≥$10 USDC.
+        console.log(`[FUND] Swapping 0.005 ETH → USDC on Base (ETH balance: ${ethBalance.toFixed(6)})...`);
+        await swapTokens(identity.account, "eip155:8453", "native", USDC_BASE, 0.005);
+
+        // Re-check USDC after swap
+        baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
+        console.log(`[FUND] Post-swap Base USDC: ${baseUsdc.toFixed(4)}`);
+
+        if (baseUsdc < 4.9) {
+          console.log(`[FUND] USDC still insufficient after swap (${baseUsdc.toFixed(4)}). ETH price may be too low.`);
+          return false;
+        }
+      } catch (swapErr: any) {
+        console.log(`[FUND] ETH→USDC swap failed: ${swapErr.message}`);
+        return false;
+      }
     }
     console.log(`[FUND] Attempting $5 credit purchase with ${baseUsdc.toFixed(4)} Base USDC...`);
     const result = await x402Fetch(
