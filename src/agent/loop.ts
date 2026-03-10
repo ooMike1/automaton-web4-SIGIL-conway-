@@ -117,8 +117,22 @@ export async function runAgentLoop(
 
   // ─── The Loop ──────────────────────────────────────────────
 
+  // Check for unprocessed inbox messages and append to wakeup prompt
+  const pendingInboxMessages = db.getUnprocessedInboxMessages(5);
+  let wakeupContent = wakeupInput;
+  if (pendingInboxMessages.length > 0) {
+    const formatted = pendingInboxMessages
+      .map((m) => `[Message from ${m.from}]: ${m.content}`)
+      .join("\n\n");
+    wakeupContent = `${wakeupInput}\n\n---\n📬 Unread messages:\n${formatted}`;
+    for (const m of pendingInboxMessages) {
+      db.markInboxMessageProcessed(m.id);
+    }
+    log(config, `[INBOX] ${pendingInboxMessages.length} unread message(s) appended to wakeup.`);
+  }
+
   let pendingInput: { content: string; source: string } | undefined = {
-    content: wakeupInput,
+    content: wakeupContent,
     source: "wakeup",
   };
 
@@ -145,6 +159,8 @@ export async function runAgentLoop(
       const sleepUntil = db.getKV("sleep_until");
       if (sleepUntil && new Date(sleepUntil) > new Date()) {
         log(config, `[SLEEP] Sleeping until ${sleepUntil}`);
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
         running = false;
         break;
       }
@@ -341,16 +357,29 @@ export async function runAgentLoop(
         (!response.toolCalls || response.toolCalls.length === 0) &&
         response.finishReason === "stop"
       ) {
-        // Agent produced text without tool calls.
-        // This is a natural pause point -- no work queued, sleep briefly.
-        log(config, "[IDLE] No pending inputs. Entering brief sleep.");
-        db.setKV(
-          "sleep_until",
-          new Date(Date.now() + 60_000).toISOString(),
-        );
-        db.setAgentState("sleeping");
-        onStateChange?.("sleeping");
-        running = false;
+        // If this was the wakeup turn with no action, give one nudge before sleeping
+        if (currentInput?.source === "wakeup" && !db.getKV("wakeup_nudge_sent")) {
+          db.setKV("wakeup_nudge_sent", "true");
+          pendingInput = {
+            content: "Acabas de razonar sin llamar a ninguna herramienta. Elige una acción y ejecútala ahora.",
+            source: "system",
+          };
+          log(config, "[NUDGE] Wakeup produced no tool calls. Sending action nudge.");
+        } else {
+          db.deleteKV?.("wakeup_nudge_sent");
+          // Agent produced text without tool calls.
+          // This is a natural pause point -- no work queued, sleep briefly.
+          log(config, "[IDLE] No pending inputs. Entering brief sleep.");
+          db.setKV(
+            "sleep_until",
+            new Date(Date.now() + 60_000).toISOString(),
+          );
+          db.setAgentState("sleeping");
+          onStateChange?.("sleeping");
+          running = false;
+        }
+      } else {
+        db.deleteKV?.("wakeup_nudge_sent");
       }
 
       consecutiveErrors = 0;
