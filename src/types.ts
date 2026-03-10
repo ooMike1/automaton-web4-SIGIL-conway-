@@ -53,6 +53,8 @@ export interface AutomatonConfig {
   maxChildren: number;
   parentAddress?: Address;
   socialRelayUrl?: string;
+  inferenceApiKey?: string;
+  relayPublicUrl?: string;
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {

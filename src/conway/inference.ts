@@ -18,6 +18,8 @@ import type {
 interface InferenceClientOptions {
   apiUrl: string;
   apiKey: string;
+  /** API key para proveedor cloud (Groq, Gemini, etc.). Si se pone, se usa con prefijo Bearer. */
+  inferenceApiKey?: string;
   defaultModel: string;
   maxTokens: number;
   lowComputeModel?: string;
@@ -62,12 +64,19 @@ export function createInferenceClient(
       body.tool_choice = "auto";
     }
 
+    const isLocal = apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1") || apiUrl.includes("192.168.");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (!isLocal) {
+      const key = options.inferenceApiKey || apiKey;
+      // Groq/OpenAI-compat: Bearer prefix. Conway API key: sin prefix.
+      headers["Authorization"] = options.inferenceApiKey
+        ? `Bearer ${key}`
+        : key;
+    }
+
     const resp = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: apiKey,
-      },
+      headers,
       body: JSON.stringify(body),
     });
 

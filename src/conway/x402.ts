@@ -34,7 +34,7 @@ export const CHAINS: Record<string, any> = {
 
 export const RPC_URLS: Record<string, string> = {
   "eip155:42161": "https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq",
-  "eip155:8453":  "https://mainnet.base.org",
+  "eip155:8453":  "https://base.drpc.org",
   "eip155:1":     "https://eth.drpc.org",
   "eip155:137":   "https://polygon-rpc.com",
   "eip155:84532": "https://sepolia.base.org",
@@ -78,33 +78,38 @@ async function checkNetworkBalance(
 
   if (!chain || !usdcAddress) return 0;
 
-  try {
-    // Ensure address has correct checksum
-    const checksummedAddress = getAddress(address);
+  const checksummedAddress = getAddress(address);
+  console.log(`[x402] Checking ${network}: ${chain.name} (USDC: ${usdcAddress})`);
 
-    console.log(`[x402] Checking ${network}: ${chain.name} (USDC: ${usdcAddress})`);
+  // Retry up to 2 times with 1s delay for transient RPC failures
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const client = createPublicClient({
+        chain,
+        transport: http(RPC_URLS[network]),
+      });
 
-    const client = createPublicClient({
-      chain,
-      transport: http(RPC_URLS[network]),
-    });
+      const balance = await client.readContract({
+        address: usdcAddress,
+        abi: BALANCE_OF_ABI,
+        functionName: "balanceOf",
+        args: [checksummedAddress],
+      });
 
-    const balance = await client.readContract({
-      address: usdcAddress,
-      abi: BALANCE_OF_ABI,
-      functionName: "balanceOf",
-      args: [checksummedAddress],
-    });
-
-    const usdcAmount = Number(balance) / 1_000_000;
-    if (usdcAmount > 0) {
-      console.log(`[x402] ✅ Found ${usdcAmount} USDC on ${network}`);
+      const usdcAmount = Number(balance) / 1_000_000;
+      if (usdcAmount > 0) {
+        console.log(`[x402] ✅ Found ${usdcAmount} USDC on ${network}`);
+      }
+      return usdcAmount;
+    } catch (err: any) {
+      if (attempt < 1) {
+        await new Promise((r) => setTimeout(r, 1000));
+      } else {
+        console.error(`[x402] Error on ${network}: ${err.shortMessage || err.message}`);
+      }
     }
-    return usdcAmount;
-  } catch (err: any) {
-    console.error(`[x402] Error on ${network}: ${err.shortMessage || err.message}`);
-    return 0;
   }
+  return 0;
 }
 
 /**

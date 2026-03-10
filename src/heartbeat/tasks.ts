@@ -16,55 +16,25 @@ import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 
 /**
- * Retry USDC balance check with exponential backoff until real balance detected.
- * Stores sync state in DB to prevent redundant retries.
+ * Check USDC balance. RPC sync is considered OK if the RPC responds (regardless of balance).
  */
 async function getUsdcBalanceWithWait(
   address: string,
   db: AutomatonDatabase,
-  maxRetries: number = 12,
-  delayMs: number = 30000, // 30 seconds
 ): Promise<{ balance: number; synced: boolean }> {
-  const syncAttempts = parseInt(db.getKV("rpc_sync_attempts") || "0");
-  const isSynced = db.getKV("rpc_synced") === "true";
-
-  // If already synced, don't retry
-  if (isSynced) {
+  try {
     const balance = await getUsdcBalance(address as `0x${string}`);
-    if (balance > 0) return { balance, synced: true };
-    // If balance dropped to 0, mark as unsynced again
-    db.setKV("rpc_synced", "false");
-    db.setKV("rpc_sync_attempts", "0");
-  }
-
-  // First check: if balance found immediately, mark synced and return
-  const balance = await getUsdcBalance(address as `0x${string}`);
-  if (balance > 0) {
-    db.setKV("rpc_synced", "true");
-    db.setKV("rpc_sync_attempts", "0");
-    console.log(`[RPC SYNC] ✅ Real USDC balance detected: $${balance.toFixed(4)}`);
+    // RPC responded successfully — mark as synced
+    if (db.getKV("rpc_synced") !== "true") {
+      db.setKV("rpc_synced", "true");
+      db.setKV("rpc_sync_attempts", "0");
+      console.log(`[RPC SYNC] ✅ RPC reachable. Balance: $${balance.toFixed(4)}`);
+    }
     return { balance, synced: true };
+  } catch (err: any) {
+    console.log(`[RPC SYNC] ⚠️ RPC unreachable: ${err.message}`);
+    return { balance: 0, synced: false };
   }
-
-  // Not synced yet - if we haven't exceeded max retries, schedule retry
-  if (syncAttempts < maxRetries) {
-    const nextAttempt = syncAttempts + 1;
-    db.setKV("rpc_sync_attempts", nextAttempt.toString());
-    db.setKV(
-      "next_rpc_sync_check",
-      new Date(Date.now() + delayMs).toISOString()
-    );
-
-    const timeLeft = Math.ceil((maxRetries - nextAttempt) * (delayMs / 1000));
-    console.log(
-      `[RPC SYNC] ⏳ RPC not synced yet (attempt ${nextAttempt}/${maxRetries}). Retrying in ${Math.ceil(delayMs / 1000)}s. Time left: ~${timeLeft}s. Entering low-activity mode.`
-    );
-  } else {
-    console.log(`[RPC SYNC] ❌ Max retries exceeded. Falling back to sandbox mode.`);
-    db.setKV("rpc_sync_failed", "true");
-  }
-
-  return { balance: 0, synced: false };
 }
 
 export interface HeartbeatTaskContext {
@@ -180,8 +150,15 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     }
 
     // If we have USDC but low credits, wake up to potentially convert
+    // Cooldown: only wake once per 10 minutes to avoid rapid-loop burning credits
     const credits = await ctx.conway.getCreditsBalance();
     if (balance > 0.5 && credits < 500) {
+      const lastWake = ctx.db.getKV("last_buy_credits_wake");
+      const cooldownMs = 10 * 60 * 1000;
+      if (lastWake && Date.now() - new Date(lastWake).getTime() < cooldownMs) {
+        return { shouldWake: false };
+      }
+      ctx.db.setKV("last_buy_credits_wake", new Date().toISOString());
       return {
         shouldWake: true,
         message: `Have ${balance.toFixed(4)} USDC but only $${(credits / 100).toFixed(2)} credits. Consider buying credits.`,

@@ -73,13 +73,14 @@ export async function sendWoLPacket(config: WolConfig): Promise<boolean> {
 
                 socket.send(packet, 0, packet.length, port, broadcastAddr, (err) => {
                     if (err) {
-                        console.error(`[WOL] Send error: ${err.message}`); \n            socket.close();
+                        console.error(`[WOL] Send error: ${err.message}`);
+                        socket.close();
                         resolve(false);
                         return;
                     }
 
                     sentCount++;
-                    console.log(`[WOL] Magic packet sent (${sentCount}/${maxRetries}) to ${targetMac}`); \n
+                    console.log(`[WOL] Magic packet sent (${sentCount}/${maxRetries}) to ${targetMac}`);
                     // Send next packet after 100ms
                     if (sentCount < maxRetries) {
                         setTimeout(sendPacket, 100);
@@ -98,7 +99,8 @@ export async function sendWoLPacket(config: WolConfig): Promise<boolean> {
             }, 5000);
 
         } catch (err: any) {
-            console.error(`[WOL] Error: ${err.message}`); \n      resolve(false);
+            console.error(`[WOL] Error: ${err.message}`);
+            resolve(false);
         }
     });
 }
@@ -135,14 +137,14 @@ export async function wakeAndWait(
     maxWaitMs: number = 60000
 ): Promise<boolean> {
     // Check if already awake
-    console.log(`[WOL] Checking if ${checkUrl} is reachable...`); \n
+    console.log(`[WOL] Checking if ${checkUrl} is reachable...`);
     const isAwake = await isHostReachable(checkUrl, 3000);
     if (isAwake) {
         console.log(`[WOL] ✅ Host already awake`);
         return true;
     }
 
-    console.log(`[WOL] ⏰ Host not reachable. Sending WoL packets...`); \n
+    console.log(`[WOL] ⏰ Host not reachable. Sending WoL packets...`);
     const sent = await sendWoLPacket(config);
 
     if (!sent) {
@@ -151,7 +153,7 @@ export async function wakeAndWait(
     }
 
     // Wait for machine to wake up
-    console.log(`[WOL] 🛫 Waiting for machine to wake up (max ${maxWaitMs}ms)...`); \n
+    console.log(`[WOL] 🛫 Waiting for machine to wake up (max ${maxWaitMs}ms)...`);
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxWaitMs) {

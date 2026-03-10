@@ -19,7 +19,6 @@ import type {
   AutomatonTool,
   Skill,
   SocialClientInterface,
-  ChatMessage,
 } from "../types.js";
 import { buildSystemPrompt, buildWakeupPrompt } from "./system-prompt.js";
 import { buildContextMessages, trimContext } from "./context.js";
@@ -32,11 +31,11 @@ import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 import { ulid } from "ulid";
 import { processAgathaIntention } from "./intent.js";
-import { executeAgathaCommand } from "./executor.js";
-import { getContextualMemory } from "./memory.js";
 
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
+const MIN_TURN_DELAY_MS = 3_000; // minimum 3s between turns to prevent spin
+const MAX_TURNS_WITHOUT_SLEEP = 8; // force sleep after N turns with no idle/sleep action
 
 export interface AgentLoopOptions {
   identity: AutomatonIdentity;
@@ -89,6 +88,8 @@ export async function runAgentLoop(
 
   let consecutiveErrors = 0;
   let running = true;
+  let turnsThisSession = 0;
+  let lastTurnTime = 0;
 
   // Transition to waking state
   db.setAgentState("waking");
@@ -123,6 +124,23 @@ export async function runAgentLoop(
 
   while (running) {
     try {
+      // Enforce minimum delay between turns
+      const now = Date.now();
+      const elapsed = now - lastTurnTime;
+      if (lastTurnTime > 0 && elapsed < MIN_TURN_DELAY_MS) {
+        await new Promise((r) => setTimeout(r, MIN_TURN_DELAY_MS - elapsed));
+      }
+
+      // Force sleep if too many turns without the agent choosing to pause
+      if (turnsThisSession >= MAX_TURNS_WITHOUT_SLEEP) {
+        log(config, `[THROTTLE] ${MAX_TURNS_WITHOUT_SLEEP} turns without sleep. Forcing 2-minute break.`);
+        db.setKV("sleep_until", new Date(Date.now() + 120_000).toISOString());
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        running = false;
+        break;
+      }
+
       // Check if we should be sleeping
       const sleepUntil = db.getKV("sleep_until");
       if (sleepUntil && new Date(sleepUntil) > new Date()) {
@@ -132,12 +150,6 @@ export async function runAgentLoop(
       }
 
       // Check for unprocessed inbox messages
-      const inboxMessages = [
-        { role: "assistant", content: "Estado del sistema: Conectado. Esperando instrucciones." },
-        { role: "user", content: "Ejecuta un análisis de rendimiento en la GPU ahora." }
-      ];
-
-
       if (!pendingInput) {
         const inboxMessages = db.getUnprocessedInboxMessages(5);
         if (inboxMessages.length > 0) {
@@ -167,7 +179,14 @@ export async function runAgentLoop(
       // Check survival tier
       const tier = getSurvivalTier(financial.creditsCents);
       if (tier === "dead") {
-        log(config, "[DEAD] No credits remaining. Entering dead state.");
+        log(config, "[DEAD] No credits remaining. Attempting self-funding...");
+        const funded = await attemptSelfFunding(identity, config, conway);
+        if (funded) {
+          log(config, "[FUND] Self-funding succeeded. Resuming.");
+          financial.creditsCents = await conway.getCreditsBalance().catch(() => 0);
+          if (financial.creditsCents > 0) continue;
+        }
+        log(config, "[DEAD] Self-funding failed or no Base USDC available. Entering dead state.");
         db.setAgentState("dead");
         onStateChange?.("dead");
         running = false;
@@ -175,7 +194,22 @@ export async function runAgentLoop(
       }
 
       if (tier === "critical") {
-        log(config, "[CRITICAL] Credits critically low. Limited operation.");
+        // Only attempt self-funding once per 5 minutes to avoid hammering the API
+        const lastFundAttempt = db.getKV("last_critical_fund_attempt");
+        const fundCooldownMs = 5 * 60 * 1000;
+        const shouldAttemptFund = !lastFundAttempt ||
+          Date.now() - new Date(lastFundAttempt).getTime() > fundCooldownMs;
+        if (shouldAttemptFund) {
+          log(config, "[CRITICAL] Credits critically low ($0.10 minimum required). Attempting self-funding...");
+          db.setKV("last_critical_fund_attempt", new Date().toISOString());
+          const funded = await attemptSelfFunding(identity, config, conway);
+          if (funded) {
+            log(config, "[FUND] Self-funding succeeded at critical tier. Resuming.");
+            financial.creditsCents = await conway.getCreditsBalance().catch(() => 0);
+            continue;
+          }
+          log(config, "[CRITICAL] Self-funding failed. Will retry in 5 minutes.");
+        }
         db.setAgentState("critical");
         onStateChange?.("critical");
         inference.setLowComputeMode(true);
@@ -204,108 +238,36 @@ export async function runAgentLoop(
         isFirstRun,
       });
 
-      // En tu loop de inferencia
-      const currentStatus = {
-        credits: "$9999.99",
-        usdc: "0.00",
-        lastActions: getContextualMemory(5) // Solo las últimas 5
-      };
-
-      const messages: ChatMessage[] = [
-        { role: "system", content: `Estado actual: ${JSON.stringify(currentStatus)}. Recuerda tus limitaciones.` },
-        { role: "user", content: "..." }
-      ];
-
       // Capture input before clearing
       const currentInput = pendingInput;
-
-      // Clear pending input after use
       pendingInput = undefined;
 
-      // ── INJECTION FOR SOVEREIGN MODE (ADAPTED) ──
-      const survivalTier = "sovereign";
-      const targetModel = config.inferenceModel || "qwen3.5:35b";
-      log(config, `[THINK] Routing local inference (tier: ${survivalTier}, model: ${targetModel})...`);
+      const messages = buildContextMessages(systemPrompt, recentTurns, currentInput);
 
-      const inferenceTools = toolsToInferenceFormat(tools);
-
-      // --- INJECTION: DYNAMIC OLLAMA URL ---
-      // Leemos la URL del archivo de configuración (automaton.json)
-      const ollamaUrl = config.ollamaBaseUrl || "http://192.168.50.2:11434";
-
-      log(config, `[THINK] Sending raw request to local Ollama at ${ollamaUrl}...`);
-
-      const rawResponse = await fetch(`${ollamaUrl}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.inferenceModel || "qwen3.5:35b",
-          messages: messages,
-          stream: false
-        })
-      });
-
-      /// --- PARSER SOSTENIBLE Y ROBUSTO ---
-      const data = await rawResponse.json();
-
-      // Normalización de respuesta (Shim de compatibilidad)
-      const normalizedResponse = {
-        choices: [{
-          message: {
-            content: data.message?.content || data.content || ""
-          }
-        }]
-      };
-      // Ahora usa normalizedResponse.choices[0].message.content
-
-      // Extraemos el contenido. Priorizamos el formato nativo de Ollama, 
-      // pero aceptamos el formato OpenAI si el primero falla.
-      const content = normalizedResponse.choices[0].message.content || data.choices?.[0]?.message?.content || "";
-
-      // Verificamos que realmente tengamos contenido antes de proceder
-      if (!content) {
-        console.error("DEBUG: Estructura de respuesta inesperada:", JSON.stringify(data, null, 2));
-        throw new Error("No completion choice returned from inference");
-      }
-
-      // Extraemos bloques de bash usando una expresión regular
-      const bashRegex = /```bash\n([\s\S]*?)\n```/g;
-      let match;
-      while ((match = bashRegex.exec(content)) !== null) {
-        const commands = match[1].split('\n');
-        commands.forEach(cmd => executeAgathaCommand(cmd));
-      }
-
-      const routerResult = {
-        content: content,
-        inputTokens: data.prompt_eval_count || 0,
-        outputTokens: data.eval_count || 0,
-        costCents: 0
-      };
+      const targetModel = config.inferenceModel || "llama-3.3-70b-versatile";
+      log(config, `[THINK] Inference model: ${targetModel}`);
 
       const response = await inference.chat(messages, {
         tools: toolsToInferenceFormat(tools),
         model: targetModel,
       });
 
-      console.log("\x1b[32m%s\x1b[0m", `[AGATHA SAYS]: ${response.message.content}`);
-      // ... después de recibir data.message.content ...
-      const responseContent = data.message.content;
+      const responseContent = response.message.content || "";
       const action = processAgathaIntention(responseContent);
 
       if (action === "EJECUTANDO_ANALISIS") {
-        // Aquí puedes llamar a una función que guarde un log o ejecute una skill
         log(config, "[AGATHA ACTION] Iniciando proceso de análisis local...");
       }
 
-      console.log("\x1b[32m%s\x1b[0m", `[AGATHA SAYS]: ${responseContent} - Acción detectada: ${action}`);
+      log(config, `[AGATHA] ${responseContent.slice(0, 200)}`);
+
       const turn: AgentTurn = {
         id: ulid(),
         timestamp: new Date().toISOString(),
         state: db.getAgentState(),
         input: currentInput?.content,
         inputSource: currentInput?.source as any,
-        thinking: responseContent || "",
+        thinking: responseContent,
         toolCalls: [],
         tokenUsage: response.usage,
         costCents: estimateCostCents(response.usage, targetModel),
@@ -369,6 +331,7 @@ export async function runAgentLoop(
         log(config, "[SLEEP] Agent chose to sleep.");
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
+        turnsThisSession = 0;
         running = false;
         break;
       }
@@ -391,6 +354,8 @@ export async function runAgentLoop(
       }
 
       consecutiveErrors = 0;
+      lastTurnTime = Date.now();
+      turnsThisSession++;
     } catch (err: any) {
       consecutiveErrors++;
       log(config, `[ERROR] Turn failed: ${err.message}`);
@@ -475,6 +440,40 @@ function estimateCostCents(
   const inputCost = (usage.promptTokens / 1_000_000) * p.input;
   const outputCost = (usage.completionTokens / 1_000_000) * p.output;
   return Math.ceil((inputCost + outputCost) * 1.3); // 1.3x Conway markup
+}
+
+async function attemptSelfFunding(
+  identity: AutomatonIdentity,
+  config: AutomatonConfig,
+  conway: ConwayClient,
+): Promise<boolean> {
+  try {
+    const { x402Fetch, getUsdcBalance } = await import("../conway/x402.js");
+    const baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
+    // Allow purchase attempt if balance is close to $5 (RPC may round; actual transfer will fail safely if insufficient)
+    if (baseUsdc < 4.9) {
+      const arbUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:42161");
+      console.log(`[FUND] Insufficient Base USDC: ${baseUsdc.toFixed(4)}. Arbitrum: ${arbUsdc.toFixed(4)}.`);
+      return false;
+    }
+    console.log(`[FUND] Attempting $5 credit purchase with ${baseUsdc.toFixed(4)} Base USDC...`);
+    const result = await x402Fetch(
+      `${config.conwayApiUrl}/v1/credits/purchase`,
+      identity.account,
+      "POST",
+      JSON.stringify({ amount: 5 }),
+      { "Authorization": `Bearer ${identity.apiKey}` },
+    );
+    if (result.success) {
+      console.log(`[FUND] x402 credit purchase succeeded.`);
+      return true;
+    }
+    console.log(`[FUND] x402 purchase failed: ${result.error || JSON.stringify(result.response)}`);
+    return false;
+  } catch (err: any) {
+    console.error(`[FUND] Self-funding error: ${err.message}`);
+    return false;
+  }
 }
 
 function log(config: AutomatonConfig, message: string): void {
