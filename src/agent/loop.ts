@@ -368,11 +368,11 @@ export async function runAgentLoop(
         } else {
           db.deleteKV?.("wakeup_nudge_sent");
           // Agent produced text without tool calls.
-          // This is a natural pause point -- no work queued, sleep briefly.
-          log(config, "[IDLE] No pending inputs. Entering 5-minute sleep.");
+          // This is a natural pause point -- no work queued, sleep for 30 minutes.
+          log(config, "[IDLE] No pending inputs. Entering 30-minute sleep.");
           db.setKV(
             "sleep_until",
-            new Date(Date.now() + 300_000).toISOString(),
+            new Date(Date.now() + 1_800_000).toISOString(),
           );
           db.setAgentState("sleeping");
           onStateChange?.("sleeping");
