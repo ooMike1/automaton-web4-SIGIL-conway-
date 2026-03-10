@@ -15,8 +15,8 @@ import {
 import type { Address, Chain, PrivateKeyAccount } from "viem";
 import { base, mainnet, polygon, arbitrum } from "viem/chains";
 
-// Li.Fi's canonical address for native gas token (ETH, MATIC, etc.)
-const NATIVE_TOKEN_ADDR = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEEE";
+// Li.Fi uses the zero address for native gas tokens (ETH, MATIC, etc.)
+const NATIVE_TOKEN_ADDR = "0x0000000000000000000000000000000000000000";
 
 const LIFI_API = "https://li.quest/v1";
 
