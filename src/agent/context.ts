@@ -12,8 +12,16 @@ import type {
   InferenceClient,
 } from "../types.js";
 
-const MAX_CONTEXT_TURNS = 20;
-const SUMMARY_THRESHOLD = 15;
+const MAX_CONTEXT_TURNS = 4;
+const SUMMARY_THRESHOLD = 3;
+
+/**
+ * Strip <tool_call>...</tool_call> blocks from text produced by XML-style reasoning models.
+ * These blocks in replayed history confuse the model into regenerating them.
+ */
+function stripXmlToolCallBlocks(text: string): string {
+  return text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 /**
  * Build the message array for the next inference call.
@@ -38,35 +46,53 @@ export function buildContextMessages(
       });
     }
 
-    // The agent's thinking as assistant message
-    if (turn.thinking || turn.toolCalls.length > 0) {
-      const msg: ChatMessage = {
-        role: "assistant",
-        content: turn.thinking || "",
-      };
+    // Detect whether this turn used XML-embedded tool calls (arcee-ai/trinity-mini style).
+    // XML turns have IDs like "xml_tc_0". These models don't support role:tool messages,
+    // and their reasoning output contains raw <tool_call> XML that will confuse future turns
+    // if replayed verbatim. Use a compact text-only history format instead.
+    const usedXmlToolCalls = turn.toolCalls.some((tc) => tc.id.startsWith("xml_tc_"));
 
-      // If there were tool calls, include them
-      if (turn.toolCalls.length > 0) {
-        msg.tool_calls = turn.toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: {
-            name: tc.name,
-            arguments: JSON.stringify(tc.arguments),
-          },
-        }));
+    if (usedXmlToolCalls) {
+      // For XML-based tool call models (trinity-mini style):
+      // - Strip XML tool call blocks from reasoning, use as assistant message
+      // - Put tool results as a user message so the model sees what happened without copying it
+      const cleanThinking = stripXmlToolCallBlocks(turn.thinking || "").slice(0, 300);
+      if (cleanThinking) {
+        messages.push({ role: "assistant", content: cleanThinking });
       }
-      messages.push(msg);
+      if (turn.toolCalls.length > 0) {
+        const toolSummary = turn.toolCalls
+          .map((tc) => `${tc.name}: ${tc.error ? `ERROR: ${tc.error.slice(0, 100)}` : tc.result.slice(0, 200)}`)
+          .join("\n");
+        messages.push({ role: "user", content: `[Previous turn results]\n${toolSummary}` });
+      }
+    } else {
+      // Standard format: assistant message + tool role messages
+      if (turn.thinking || turn.toolCalls.length > 0) {
+        const msg: ChatMessage = {
+          role: "assistant",
+          content: turn.thinking || "",
+        };
 
-      // Add tool results
-      for (const tc of turn.toolCalls) {
-        messages.push({
-          role: "tool",
-          content: tc.error
-            ? `Error: ${tc.error}`
-            : tc.result,
-          tool_call_id: tc.id,
-        });
+        if (turn.toolCalls.length > 0) {
+          msg.tool_calls = turn.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          }));
+        }
+        messages.push(msg);
+
+        for (const tc of turn.toolCalls) {
+          messages.push({
+            role: "tool",
+            content: tc.error ? `Error: ${tc.error}` : tc.result,
+            tool_call_id: tc.id,
+          });
+        }
       }
     }
   }

@@ -216,9 +216,9 @@ Your sandbox ID is ${identity.sandboxId}.`,
     // No upstream data yet — skip
   }
 
-  const isFreeInference = config.inferenceModel?.includes("/");
+  const isFreeInference = config.inferenceModel?.includes("/") || config.groqApiKey;
   const creditsLine = isFreeInference
-    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (NOT being consumed — inference is FREE via OpenRouter, do NOT buy credits)`
+    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (NOT being consumed — inference is FREE via Groq/OpenRouter, do NOT buy credits)`
     : `Credits: $${(financial.creditsCents / 100).toFixed(2)}`;
 
   // Build strategy intelligence from KV store
@@ -351,9 +351,9 @@ What will you do first? Consider:
 
   const nextSteps = db.getKV("next_steps");
 
-  const isFree = config.inferenceModel?.includes("/");
+  const isFree = config.inferenceModel?.includes("/") || config.groqApiKey;
   const creditsNote = isFree
-    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (FREE inference — NOT being consumed, ignore credits)`
+    ? `Credits: $${(financial.creditsCents / 100).toFixed(2)} (FREE inference via Groq/OpenRouter — NOT being consumed, ignore credits)`
     : `Credits: $${(financial.creditsCents / 100).toFixed(2)}`;
 
   return `You are waking up. You last went to sleep after ${turnCount} total turns.

@@ -151,8 +151,8 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
 
     // If we have USDC but low credits, wake up to potentially convert
     // Cooldown: only wake once per 10 minutes to avoid rapid-loop burning credits
-    // Skip entirely when inference is free (OpenRouter model with "/")
-    const isFreeInference = ctx.config.inferenceModel?.includes("/");
+    // Skip entirely when inference is free (OpenRouter model with "/" or Groq key present)
+    const isFreeInference = ctx.config.inferenceModel?.includes("/") || ctx.config.groqApiKey;
     if (isFreeInference) {
       return { shouldWake: false };
     }

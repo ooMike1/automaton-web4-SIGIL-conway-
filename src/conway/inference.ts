@@ -115,11 +115,26 @@ export function createInferenceClient(
       console.log(`[INFERENCE] Routing to Groq: ${model}`);
     }
 
-    const resp = await fetch(`${effectiveUrl}/v1/chat/completions`, {
+    // Retry once on 429 rate-limit, waiting the suggested time
+    let resp = await fetch(`${effectiveUrl}/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
     });
+
+    if (resp.status === 429) {
+      const retryText = await resp.text();
+      // Groq embeds "Please try again in Xs" in the error message
+      const match = retryText.match(/try again in ([\d.]+)s/);
+      const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 2000 : 62000;
+      console.log(`[INFERENCE] Rate limited. Waiting ${Math.round(waitMs / 1000)}s before retry...`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      resp = await fetch(`${effectiveUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    }
 
     if (!resp.ok) {
       const text = await resp.text();
@@ -216,9 +231,12 @@ export function createInferenceClient(
 /**
  * Extract tool calls embedded as XML by reasoning models like arcee-ai/trinity-mini.
  * These models output tool calls inside the text rather than via the function-calling API.
+ * Deduplicates by (name, arguments) to avoid executing the same call multiple times
+ * when the model repeats its reasoning pattern.
  */
 function parseXmlToolCalls(text: string): InferenceToolCall[] {
   const results: InferenceToolCall[] = [];
+  const seen = new Set<string>();
   const pattern = /<tool_call>([\s\S]*?)<\/tool_call>/g;
   const matches = [...text.matchAll(pattern)];
   let idx = 0;
@@ -227,16 +245,16 @@ function parseXmlToolCalls(text: string): InferenceToolCall[] {
       const parsed = JSON.parse(m[1].trim());
       const fnName: string = parsed.name || parsed.function || "";
       const args = parsed.arguments ?? parsed.parameters ?? {};
-      if (fnName) {
-        results.push({
-          id: `xml_tc_${idx++}`,
-          type: "function" as const,
-          function: {
-            name: fnName,
-            arguments: typeof args === "string" ? args : JSON.stringify(args),
-          },
-        });
-      }
+      if (!fnName) continue;
+      const argsStr = typeof args === "string" ? args : JSON.stringify(args);
+      const key = `${fnName}:${argsStr}`;
+      if (seen.has(key)) continue; // skip duplicate
+      seen.add(key);
+      results.push({
+        id: `xml_tc_${idx++}`,
+        type: "function" as const,
+        function: { name: fnName, arguments: argsStr },
+      });
     } catch {
       // Malformed JSON inside tag — skip
     }
