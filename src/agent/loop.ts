@@ -450,8 +450,8 @@ async function attemptSelfFunding(
   try {
     const { x402Fetch, getUsdcBalance } = await import("../conway/x402.js");
     let baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
-    // Allow purchase attempt if balance is close to $5 (RPC may round; actual transfer will fail safely if insufficient)
-    if (baseUsdc < 4.9) {
+    // Swap if USDC is below $5 — Conway requires exactly $5.00 minimum
+    if (baseUsdc < 5.0) {
       // Try swapping ETH → USDC on Base to cover the shortfall
       console.log(`[FUND] Base USDC low (${baseUsdc.toFixed(4)}). Checking ETH balance for swap...`);
       try {
@@ -479,7 +479,7 @@ async function attemptSelfFunding(
         baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
         console.log(`[FUND] Post-swap Base USDC: ${baseUsdc.toFixed(4)}`);
 
-        if (baseUsdc < 4.9) {
+        if (baseUsdc < 5.0) {
           console.log(`[FUND] USDC still insufficient after swap (${baseUsdc.toFixed(4)}). ETH price may be too low.`);
           return false;
         }
