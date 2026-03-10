@@ -15,11 +15,23 @@ import type {
   InferenceToolDefinition,
 } from "../types.js";
 
+// Groq model name prefixes — if a model starts with any of these, route to Groq automatically
+const GROQ_MODEL_PREFIXES = [
+  "llama", "mixtral", "gemma", "deepseek-r1", "qwen", "whisper",
+];
+
+function isGroqModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return GROQ_MODEL_PREFIXES.some((p) => lower.startsWith(p));
+}
+
 interface InferenceClientOptions {
   apiUrl: string;
   apiKey: string;
   /** API key para proveedor cloud (Groq, Gemini, etc.). Si se pone, se usa con prefijo Bearer. */
   inferenceApiKey?: string;
+  /** Groq API key — si se provee, los modelos Groq se enrutan automáticamente a api.groq.com */
+  groqApiKey?: string;
   defaultModel: string;
   maxTokens: number;
   lowComputeModel?: string;
@@ -64,17 +76,26 @@ export function createInferenceClient(
       body.tool_choice = "auto";
     }
 
-    const isLocal = apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1") || apiUrl.includes("192.168.");
+    // Auto-route Groq models to api.groq.com if a Groq key is configured
+    const useGroq = isGroqModel(model) && !!options.groqApiKey;
+    const effectiveUrl = useGroq ? "https://api.groq.com" : apiUrl;
+
+    const isLocal = effectiveUrl.includes("localhost") || effectiveUrl.includes("127.0.0.1") || effectiveUrl.includes("192.168.");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (!isLocal) {
-      const key = options.inferenceApiKey || apiKey;
-      // Groq/OpenAI-compat: Bearer prefix. Conway API key: sin prefix.
-      headers["Authorization"] = options.inferenceApiKey
-        ? `Bearer ${key}`
-        : key;
+      if (useGroq) {
+        headers["Authorization"] = `Bearer ${options.groqApiKey}`;
+      } else {
+        const key = options.inferenceApiKey || apiKey;
+        headers["Authorization"] = options.inferenceApiKey ? `Bearer ${key}` : key;
+      }
     }
 
-    const resp = await fetch(`${apiUrl}/v1/chat/completions`, {
+    if (useGroq) {
+      console.log(`[INFERENCE] Routing to Groq: ${model}`);
+    }
+
+    const resp = await fetch(`${effectiveUrl}/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

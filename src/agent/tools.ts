@@ -1697,7 +1697,7 @@ Model: ${ctx.inference.getDefaultModel()}
     {
       name: "set_inference_model",
       description:
-        "Change the inference model used for your own reasoning. Only models with strategic thinking capability are allowed (no nano-class models). This persists across restarts.",
+        "Change the inference model used for your own reasoning. Only models with strategic thinking capability are allowed (no nano-class models). Conway models (gpt-4o-mini, gpt-4.1, etc.) cost credits. Groq models (llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768, gemma2-9b-it, deepseek-r1-distill-llama-70b) are FREE — they route automatically to Groq at no credit cost.",
       category: "self_mod",
       parameters: {
         type: "object",

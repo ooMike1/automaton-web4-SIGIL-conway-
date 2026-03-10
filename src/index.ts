@@ -294,6 +294,7 @@ async function run(): Promise<void> {
     apiUrl: config.ollamaBaseUrl || "http://127.0.0.1:11434",
     apiKey,
     inferenceApiKey: config.inferenceApiKey,
+    groqApiKey: config.groqApiKey,
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
   });
