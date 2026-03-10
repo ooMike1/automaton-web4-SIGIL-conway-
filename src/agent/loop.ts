@@ -464,16 +464,19 @@ async function attemptSelfFunding(
         const ethWei = await pc.getBalance({ address: identity.address as `0x${string}` });
         const ethBalance = Number(ethWei) / 1e18;
 
-        // Require at least 0.015 ETH: 0.01 reserve for gas + 0.005 to swap
-        if (ethBalance < 0.015) {
+        // Keep 0.001 ETH gas reserve (Base L2 swaps cost ~0.0001-0.0002 ETH)
+        const GAS_RESERVE = 0.001;
+        const swappable = ethBalance - GAS_RESERVE;
+        if (swappable < 0.001) {
           const arbUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:42161");
           console.log(`[FUND] Insufficient funds. Base USDC: ${baseUsdc.toFixed(4)}, ETH: ${ethBalance.toFixed(6)}, Arb USDC: ${arbUsdc.toFixed(4)}.`);
           return false;
         }
 
-        // Swap 0.005 ETH → USDC. At $2000+/ETH this yields ≥$10 USDC.
-        console.log(`[FUND] Swapping 0.005 ETH → USDC on Base (ETH balance: ${ethBalance.toFixed(6)})...`);
-        await swapTokens(identity.account, "eip155:8453", "native", USDC_BASE, 0.005);
+        // Swap all available ETH (minus gas reserve), capped at 0.05 ETH
+        const swapAmount = Math.min(swappable, 0.05);
+        console.log(`[FUND] Swapping ${swapAmount.toFixed(6)} ETH → USDC on Base (balance: ${ethBalance.toFixed(6)})...`);
+        await swapTokens(identity.account, "eip155:8453", "native", USDC_BASE, swapAmount);
 
         // Re-check USDC after swap
         baseUsdc = await getUsdcBalance(identity.address as `0x${string}`, "eip155:8453");
