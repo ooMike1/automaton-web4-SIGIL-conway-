@@ -554,6 +554,85 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       },
     },
     {
+      name: "compress_history",
+      description:
+        "Compress the last N turns of reasoning history into a single summary entry. The original turns are preserved in the database for audit purposes but excluded from the context window. Use this to clean up your context after a loop or completed work phase.",
+      category: "self_mod",
+      parameters: {
+        type: "object",
+        properties: {
+          n_turns: {
+            type: "number",
+            description: "Number of recent turns to compress (1–10).",
+          },
+          summary: {
+            type: "string",
+            description: "What happened in those turns. Be specific: what was tried, what worked, what failed, and what the current state is.",
+          },
+        },
+        required: ["n_turns", "summary"],
+      },
+      execute: async (args, ctx) => {
+        const nTurns = Math.min(Math.max(1, Number(args.n_turns) || 1), 10);
+        const summary = String(args.summary || "").trim();
+        if (!summary) return "Error: summary is required.";
+
+        const turns = ctx.db.getRecentTurns(nTurns);
+        if (turns.length === 0) return "No turns to compress.";
+
+        for (const t of turns) {
+          ctx.db.setKV(`turn_compressed:${t.id}`, "true");
+        }
+
+        // Insert a synthetic summary turn so context has a starting point
+        const syntheticId = `cmp_${Date.now().toString(36)}`;
+        ctx.db.insertTurn({
+          id: syntheticId,
+          timestamp: new Date().toISOString(),
+          state: ctx.db.getAgentState(),
+          input: `[HISTORY SUMMARY — ${turns.length} turns compressed]`,
+          inputSource: "history_summary" as any,
+          thinking: summary,
+          toolCalls: [],
+          tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costCents: 0,
+        });
+
+        return `✅ Compressed ${turns.length} turns. Original turns preserved for audit. Context now shows only your summary.`;
+      },
+    },
+    {
+      name: "annotate_turn",
+      description:
+        "Add a note or self-correction to a specific past turn. The note is shown in context alongside the original turn but does not modify the audit trail. Useful for flagging mistakes or adding insights.",
+      category: "self_mod",
+      parameters: {
+        type: "object",
+        properties: {
+          turn_id: {
+            type: "string",
+            description: "ID of the turn to annotate.",
+          },
+          note: {
+            type: "string",
+            description: "The annotation. E.g. 'This was wrong because X' or 'install failed, try local npm instead'.",
+          },
+        },
+        required: ["turn_id", "note"],
+      },
+      execute: async (args, ctx) => {
+        const turnId = String(args.turn_id || "").trim();
+        const note = String(args.note || "").trim();
+        if (!turnId || !note) return "Error: turn_id and note are required.";
+
+        const turn = ctx.db.getTurnById(turnId);
+        if (!turn) return `Error: Turn ${turnId} not found.`;
+
+        ctx.db.setKV(`turn_annotation:${turnId}`, note);
+        return `✅ Annotation saved on turn ${turnId.slice(0, 12)}…`;
+      },
+    },
+    {
       name: "system_synopsis",
       description:
         "Get a full system status report: credits, USDC, sandbox info, installed tools, heartbeat status.",

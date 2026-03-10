@@ -20,14 +20,21 @@ const GROQ_MODEL_PREFIXES = [
   "llama", "mixtral", "gemma", "deepseek-r1", "qwen", "whisper",
 ];
 
+// Models that must always be routed to Groq even if they contain "/" (overrides OpenRouter detection)
+const GROQ_EXPLICIT_MODELS = new Set([
+  "openai/gpt-oss-20b",
+]);
+
 function isGroqModel(model: string): boolean {
   const lower = model.toLowerCase();
+  if (GROQ_EXPLICIT_MODELS.has(lower)) return true;
   return GROQ_MODEL_PREFIXES.some((p) => lower.startsWith(p));
 }
 
 // OpenRouter models always contain a "/" (e.g. "deepseek/deepseek-chat-v3:free")
+// Explicit Groq models take precedence even if they contain "/"
 function isOpenRouterModel(model: string): boolean {
-  return model.includes("/");
+  return model.includes("/") && !GROQ_EXPLICIT_MODELS.has(model.toLowerCase());
 }
 
 interface InferenceClientOptions {

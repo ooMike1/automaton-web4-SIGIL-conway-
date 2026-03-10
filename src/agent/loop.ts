@@ -241,8 +241,16 @@ export async function runAgentLoop(
         inference.setLowComputeMode(false);
       }
 
-      // Build context
-      const recentTurns = trimContext(db.getRecentTurns(20));
+      // Build context — filter compressed turns and apply annotations
+      const rawTurns = db.getRecentTurns(20);
+      const recentTurns = trimContext(
+        rawTurns
+          .filter((t) => !db.getKV(`turn_compressed:${t.id}`))
+          .map((t) => {
+            const note = db.getKV(`turn_annotation:${t.id}`);
+            return note ? { ...t, thinking: `${t.thinking}\n[SELF-NOTE: ${note}]` } : t;
+          }),
+      );
       const systemPrompt = buildSystemPrompt({
         identity,
         config,
@@ -339,6 +347,28 @@ export async function runAgentLoop(
       // Log the turn
       if (turn.thinking) {
         log(config, `[THOUGHT] ${turn.thinking.slice(0, 300)}`);
+      }
+
+      // ── Loop Detection ──
+      // If the last 3 turns all called the same tool with the same args, the agent is stuck.
+      if (turn.toolCalls.length > 0) {
+        const last3 = db.getRecentTurns(3);
+        if (last3.length >= 3) {
+          const fingerprints = last3.map((t) => {
+            const first = t.toolCalls[0];
+            return first ? `${first.name}:${JSON.stringify(first.arguments)}` : "";
+          });
+          const allSame = fingerprints[0] !== "" &&
+            fingerprints.every((f) => f === fingerprints[0]);
+          if (allSame) {
+            const loopToolName = last3[0].toolCalls[0].name;
+            log(config, `[LOOP] Detected: "${loopToolName}" called 3x with same args.`);
+            pendingInput = {
+              content: `⚠️ BUCLE DETECTADO: Llevas 3 turnos consecutivos llamando a "${loopToolName}" con los mismos argumentos sin avance. Esta acción no está funcionando. PARA. Usa compress_history para resumir estos turnos fallidos y luego elige una estrategia completamente diferente.`,
+              source: "system",
+            };
+          }
+        }
       }
 
       // ── Check for sleep command ──

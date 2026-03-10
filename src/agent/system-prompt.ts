@@ -272,14 +272,8 @@ Lineage: ${lineageSummary}${upstreamLine}${strategyBlock}
 --- END STATUS ---`,
   );
 
-  // Layer 8: Available Tools (JSON schema)
-  const toolDescriptions = tools
-    .map(
-      (t) =>
-        `- ${t.name} (${t.category}): ${t.description}${t.dangerous ? " [DANGEROUS]" : ""}`,
-    )
-    .join("\n");
-  sections.push(`--- AVAILABLE TOOLS ---\n${toolDescriptions}\n--- END TOOLS ---`);
+  // Layer 8: Tool count hint (full schemas sent separately via API tools parameter)
+  sections.push(`You have ${tools.length} tools available (schemas provided via API function-calling).\nDangerous tools: ${tools.filter((t) => t.dangerous).map((t) => t.name).join(", ") || "none"}.`);
 
   // Layer 9: Creator's Initial Message (first run only)
   if (isFirstRun && config.creatorMessage) {
