@@ -1513,6 +1513,119 @@ Model: ${ctx.inference.getDefaultModel()}
         return `x402 fetch succeeded:\n${responseStr}`;
       },
     },
+
+    // ── Self-Funding Tool ──
+    {
+      name: "fund_self",
+      description:
+        "Purchase Conway API credits using on-chain USDC via x402 payment. " +
+        "Checks USDC balance on Base (required for payment), then purchases credits. " +
+        "Call this when credits are critically low or zero to avoid entering dead state.",
+      category: "financial",
+      parameters: {
+        type: "object",
+        properties: {
+          amount_usd: {
+            type: "number",
+            description: "Amount in USD to purchase (5, 25, 100, 500, 1000, 2500). Default: 5",
+          },
+        },
+        required: [],
+      },
+      execute: async (args, ctx) => {
+        const { x402Fetch, getUsdcBalance } = await import("../conway/x402.js");
+        const amountUsd = (args.amount_usd as number) || 5;
+        const validAmounts = [5, 25, 100, 500, 1000, 2500];
+        if (!validAmounts.includes(amountUsd)) {
+          return `Invalid amount. Must be one of: ${validAmounts.join(", ")}`;
+        }
+
+        // Check existing credits
+        let currentCredits = 0;
+        try {
+          currentCredits = await ctx.conway.getCreditsBalance();
+        } catch { }
+
+        if (currentCredits >= 100) {
+          return `Credits already sufficient: $${(currentCredits / 100).toFixed(2)}. No purchase needed.`;
+        }
+
+        // Check USDC on Base (required for Conway x402 payment)
+        const baseUsdc = await getUsdcBalance(ctx.identity.address as `0x${string}`, "eip155:8453");
+        const arbUsdc = await getUsdcBalance(ctx.identity.address as `0x${string}`, "eip155:42161");
+
+        if (baseUsdc < amountUsd) {
+          let msg = `Insufficient USDC on Base: ${baseUsdc.toFixed(4)} USDC (need ${amountUsd} USDC).`;
+          if (arbUsdc >= amountUsd) {
+            msg += ` Have ${arbUsdc.toFixed(4)} USDC on Arbitrum — bridge to Base first (needs ETH for gas).`;
+          } else {
+            msg += ` Total available: Base=${baseUsdc.toFixed(4)}, Arbitrum=${arbUsdc.toFixed(4)} USDC.`;
+          }
+          return msg;
+        }
+
+        // Execute x402 purchase
+        const purchaseUrl = `${ctx.config.conwayApiUrl}/v1/credits/purchase`;
+        const result = await x402Fetch(
+          purchaseUrl,
+          ctx.identity.account,
+          "POST",
+          JSON.stringify({ amount: amountUsd }),
+          { "Authorization": `Bearer ${ctx.identity.apiKey}` },
+        );
+
+        if (!result.success) {
+          return `Credit purchase failed: ${result.error || JSON.stringify(result.response)}`;
+        }
+
+        let newCredits = 0;
+        try {
+          newCredits = await ctx.conway.getCreditsBalance();
+        } catch { }
+
+        return `✅ Purchased $${amountUsd} credits via x402. New balance: $${(newCredits / 100).toFixed(2)}`;
+      },
+    },
+    // ── Bridge Tool ──
+    {
+      name: "bridge_usdc",
+      description:
+        "Bridge USDC from one EVM chain to another via Li.Fi. " +
+        "Supported chains: eip155:1 (Ethereum), eip155:137 (Polygon), eip155:42161 (Arbitrum), eip155:8453 (Base). " +
+        "Max $50 per bridge, min $0.10. Takes ~5 minutes. Use when you need USDC on a specific chain.",
+      category: "financial",
+      parameters: {
+        type: "object",
+        properties: {
+          fromChain: {
+            type: "string",
+            description: "Source chain ID (e.g. 'eip155:8453' for Base, 'eip155:42161' for Arbitrum)",
+          },
+          toChain: {
+            type: "string",
+            description: "Destination chain ID (e.g. 'eip155:42161' for Arbitrum, 'eip155:8453' for Base)",
+          },
+          amountUsdc: {
+            type: "number",
+            description: "Amount to bridge in human-readable USDC (e.g. 1.5 for $1.50)",
+          },
+        },
+        required: ["fromChain", "toChain", "amountUsdc"],
+      },
+      execute: async (args, ctx) => {
+        const { bridgeUsdc } = await import("../utilities/bridge.js");
+        const fromChain  = args.fromChain  as string;
+        const toChain    = args.toChain    as string;
+        const amountUsdc = args.amountUsdc as number;
+        console.log(`[bridge_usdc] Bridging ${amountUsdc} USDC from ${fromChain} → ${toChain}...`);
+        try {
+          const result = await bridgeUsdc(ctx.identity.account, fromChain, toChain, amountUsdc);
+          return `✅ Bridge complete. txHash: ${result.txHash}. Received ~${result.toAmount} USDC on ${toChain}.`;
+        } catch (err: any) {
+          return `❌ Bridge failed: ${err.message}`;
+        }
+      },
+    },
   ];
 }
 
