@@ -16,7 +16,7 @@ import {
 import { base, baseSepolia, mainnet, polygon, arbitrum } from "viem/chains";
 
 // USDC contract addresses on multiple networks (with correct checksums)
-const USDC_ADDRESSES: Record<string, Address> = {
+export const USDC_ADDRESSES: Record<string, Address> = {
   "eip155:1": getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),           // Ethereum mainnet
   "eip155:137": getAddress("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),        // Polygon
   "eip155:42161": getAddress("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),      // Arbitrum ONE (native USDC)
@@ -24,12 +24,20 @@ const USDC_ADDRESSES: Record<string, Address> = {
   "eip155:84532": getAddress("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),      // Base Sepolia
 };
 
-const CHAINS: Record<string, any> = {
+export const CHAINS: Record<string, any> = {
   "eip155:1": mainnet,
   "eip155:137": polygon,
   "eip155:42161": arbitrum,
   "eip155:8453": base,
   "eip155:84532": baseSepolia,
+};
+
+export const RPC_URLS: Record<string, string> = {
+  "eip155:42161": "https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq",
+  "eip155:8453":  "https://mainnet.base.org",
+  "eip155:1":     "https://eth.drpc.org",
+  "eip155:137":   "https://polygon-rpc.com",
+  "eip155:84532": "https://sepolia.base.org",
 };
 
 const BALANCE_OF_ABI = [
@@ -76,17 +84,9 @@ async function checkNetworkBalance(
 
     console.log(`[x402] Checking ${network}: ${chain.name} (USDC: ${usdcAddress})`);
 
-    const rpcUrls: Record<string, string> = {
-      "eip155:42161": "https://arb-mainnet.g.alchemy.com/v2/OzJPWxPbbiSE_ug5Vi0vq", // Arbitrum (Alchemy)
-      "eip155:8453": "https://mainnet.base.org", // Base
-      "eip155:1": "https://eth.drpc.org", // Ethereum
-      "eip155:137": "https://polygon-rpc.com", // Polygon
-      "eip155:84532": "https://sepolia.base.org", // Base Sepolia
-    };
-
     const client = createPublicClient({
       chain,
-      transport: http(rpcUrls[network]),
+      transport: http(RPC_URLS[network]),
     });
 
     const balance = await client.readContract({
@@ -346,7 +346,7 @@ async function signPayment(
     const domain = {
       name: "USD Coin",
       version: "2",
-      chainId: requirement.network === "eip155:84532" ? 84532 : 8453,
+      chainId: CHAINS[requirement.network]?.id ?? 8453,
       verifyingContract: requirement.usdcAddress,
     } as const;
 
