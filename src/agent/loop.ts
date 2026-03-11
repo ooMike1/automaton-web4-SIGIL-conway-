@@ -31,6 +31,7 @@ import { getSurvivalTier } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
 import { ulid } from "ulid";
 import { processAgathaIntention } from "./intent.js";
+import { attemptSelfUpdate } from "../git/self-update.js";
 
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
@@ -138,6 +139,20 @@ export async function runAgentLoop(
 
   while (running) {
     try {
+      // ── Git Self-Update ──
+      // Attempt to pull latest code from remote at each turn
+      try {
+        const updateResult = await attemptSelfUpdate(db);
+        if (updateResult.updated) {
+          logColor(`[SELF-UPDATE] ${updateResult.message}`, "green");
+        } else if (updateResult.error) {
+          logColor(`[SELF-UPDATE] ${updateResult.message}`, "yellow");
+        }
+      } catch (updateErr: any) {
+        // Self-update is best-effort — never block the loop
+        logColor(`[SELF-UPDATE] Error: ${updateErr.message}`, "yellow");
+      }
+
       // Enforce minimum delay between turns
       const now = Date.now();
       const elapsed = now - lastTurnTime;
